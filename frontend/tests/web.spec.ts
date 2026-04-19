@@ -11,6 +11,13 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.control-workbench__agent').getByRole('heading', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
+  const fleetOverviewScroll = await page.locator('.fleet-overview-card').evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    overflowY: window.getComputedStyle(node).overflowY,
+  }))
+  expect(fleetOverviewScroll.scrollHeight).toBeLessThanOrEqual(fleetOverviewScroll.clientHeight + 2)
+  expect(fleetOverviewScroll.overflowY).toBe('visible')
 
   await page.goto('/hosts/1')
   await expect(page.getByText('资源趋势')).toBeVisible({ timeout: 15_000 })

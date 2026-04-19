@@ -192,16 +192,14 @@ export function DashboardPage() {
               extra={<Tag>{hostRiskView.length} 台主机</Tag>}
             >
               <div className="panel-subcard__content">
-                <div className="table-scroll">
-                  <Table
-                    rowKey="id"
-                    dataSource={hostRiskView}
-                    columns={fleetColumns}
-                    size="small"
-                    pagination={false}
-                    scroll={{ x: 980 }}
-                  />
-                </div>
+                <Table
+                  rowKey="id"
+                  dataSource={hostRiskView}
+                  columns={fleetColumns}
+                  size="small"
+                  pagination={false}
+                  scroll={{ x: 980 }}
+                />
               </div>
             </Card>
 

@@ -84,6 +84,10 @@ body {
   padding-right: 4px;
 }
 
+.page-shell__body > * {
+  flex-shrink: 0;
+}
+
 .panel-card,
 .panel-subcard {
   display: flex;
@@ -467,6 +471,8 @@ body {
   resize: none !important;
   overflow: visible !important;
   min-height: auto !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
 }
 
 .fleet-overview-card .ant-card-body {
@@ -474,8 +480,23 @@ body {
   padding: 0 0 4px;
 }
 
+.fleet-overview-card .panel-subcard__content,
+.fleet-overview-card .table-scroll {
+  overflow: visible !important;
+  flex: 0 0 auto !important;
+  min-height: auto !important;
+  padding-right: 0;
+}
+
 .fleet-overview-card .ant-table-wrapper {
   overflow: visible;
+}
+
+.fleet-overview-card .ant-table-container,
+.fleet-overview-card .ant-table-content,
+.fleet-overview-card .ant-spin-nested-loading,
+.fleet-overview-card .ant-spin-container {
+  overflow: visible !important;
 }
 
 .fleet-overview-card .ant-table-thead > tr > th,
