@@ -29,7 +29,7 @@ function App() {
         token: {
           colorPrimary: '#0f766e',
           colorBgLayout: '#f3f7f7',
-          borderRadius: 14,
+          borderRadius: 0,
           fontFamily: `'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif`,
         },
       }}

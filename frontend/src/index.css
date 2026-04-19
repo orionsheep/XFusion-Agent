@@ -30,7 +30,7 @@ body {
 }
 
 .page-kicker {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -46,14 +46,14 @@ body {
 }
 
 .page-subtitle {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   color: #475569;
 }
 
 .content-stack {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
   min-height: 0;
 }
 
@@ -72,38 +72,38 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 24px;
+  gap: 12px;
 }
 
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  gap: 8px;
 }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  gap: 8px;
 }
 
 .two-col {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  gap: 16px;
+  gap: 8px;
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
-  gap: 16px;
+  gap: 8px;
 }
 
 .detail-mini-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .global-health {
@@ -129,6 +129,50 @@ body {
   min-height: 100%;
 }
 
+.app-nav__resize-handle {
+  width: 8px;
+  flex: 0 0 8px;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+}
+
+.app-nav__resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.app-nav__resize-handle:hover::before,
+.app-nav__resize-handle.is-dragging::before {
+  background: rgba(15, 118, 110, 0.45);
+}
+
+.app-header__bar {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 8px 14px;
+}
+
+.app-header__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.app-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
 .app-content {
   min-height: 0;
 }
@@ -136,7 +180,7 @@ body {
 .control-workbench {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(360px, 0.95fr);
-  gap: 16px;
+  gap: 8px;
   height: 100%;
   min-height: 0;
 }
@@ -145,7 +189,6 @@ body {
 .control-workbench__agent {
   min-height: 0;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 20px;
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(18px);
   overflow: hidden;
@@ -153,13 +196,27 @@ body {
 }
 
 .control-workbench__workspace {
-  padding: 18px;
+  padding: 10px;
 }
 
 .control-workbench__workspace > .content-stack {
   height: 100%;
   overflow: auto;
   padding-right: 4px;
+}
+
+.control-workbench__workspace,
+.control-workbench__agent,
+.content-stack > .ant-card,
+.summary-grid > .ant-card,
+.two-col > .ant-card,
+.detail-grid > .ant-card,
+.detail-mini-stats > .ant-card,
+.agent-panel__section {
+  resize: both;
+  overflow: auto;
+  min-width: 240px;
+  min-height: 120px;
 }
 
 .agent-panel {
@@ -172,7 +229,7 @@ body {
 .agent-panel__header,
 .agent-panel__context,
 .agent-panel__composer {
-  padding: 18px;
+  padding: 10px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
   flex-shrink: 0;
 }
@@ -186,28 +243,49 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 18px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
 }
 
 .agent-panel__section {
-  padding: 14px;
-  border-radius: 16px;
+  padding: 10px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(248, 250, 252, 0.75);
 }
 
+.ant-card,
+.ant-card .ant-card-head,
+.ant-modal-content,
+.app-header__bar,
+.control-workbench__workspace,
+.control-workbench__agent,
+.agent-panel__section,
+.global-health,
+.ant-btn,
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector {
+  border-radius: 0 !important;
+}
+
 @media (max-width: 1024px) {
   .hero-panel__inner,
-  .host-hero__top {
+  .host-hero__top,
+  .app-header__title,
+  .app-header__meta {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .control-workbench {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(380px, 44vh);
+  }
+
+  .app-nav__resize-handle {
+    display: none;
   }
 
   .two-col {

@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Avatar, Button, Layout, Menu, Space, Typography } from 'antd'
+import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AgentPanel } from './AgentPanel'
 import { clearStoredToken, fetchOverview } from '../services/api'
@@ -24,9 +25,20 @@ const items = [
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
 
+const MIN_NAV_WIDTH = 220
+const MAX_NAV_WIDTH = 420
+
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [navWidth, setNavWidth] = useState(() => {
+    if (typeof window === 'undefined') return 260
+    const stored = Number(window.localStorage.getItem('xfusion_nav_width'))
+    return Number.isFinite(stored)
+      ? Math.min(MAX_NAV_WIDTH, Math.max(MIN_NAV_WIDTH, stored))
+      : 260
+  })
+  const [draggingNav, setDraggingNav] = useState(false)
   const { data: overview } = useQuery({
     queryKey: ['overview-shell'],
     queryFn: fetchOverview,
@@ -46,10 +58,39 @@ export function AppShell() {
     )
   }).length
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('xfusion_nav_width', String(navWidth))
+    }
+  }, [navWidth])
+
+  useEffect(() => {
+    if (!draggingNav) return
+
+    const handleMove = (event: MouseEvent) => {
+      const next = Math.min(MAX_NAV_WIDTH, Math.max(MIN_NAV_WIDTH, event.clientX))
+      setNavWidth(next)
+    }
+
+    const handleUp = () => setDraggingNav(false)
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+
+    return () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [draggingNav])
+
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Sider
-        width={260}
+        width={navWidth}
         theme="light"
         className="app-nav"
         style={{
@@ -74,29 +115,26 @@ export function AppShell() {
           style={{ borderInlineEnd: 'none', background: 'transparent' }}
         />
       </Sider>
+      <div
+        className={`app-nav__resize-handle${draggingNav ? ' is-dragging' : ''}`}
+        onMouseDown={() => setDraggingNav(true)}
+      />
       <Layout style={{ minWidth: 0 }}>
         <Header
           className="app-header"
           style={{
             background: 'transparent',
-            padding: '16px 24px 0',
+            padding: '10px 24px 0',
             height: 'auto',
             flexShrink: 0,
           }}
         >
-          <div
-            style={{
-              background: 'rgba(255,255,255,0.78)',
-              border: '1px solid rgba(15,23,42,0.08)',
-              borderRadius: 18,
-              padding: '14px 18px',
-            }}
-          >
+          <div className="app-header__bar">
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div>
-                <Typography.Text strong>AI 运维总控台</Typography.Text>
-                <div style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span>多服务器状态总览、任务编排、审批与审计。</span>
+              <div className="app-header__title">
+                <Typography.Text strong>XFusion Agent</Typography.Text>
+                <div className="app-header__meta">
+                  <span>多服务器状态总览、任务编排、审批与审计</span>
                   <span className={`global-health ${riskHostCount ? 'global-health--risk' : ''}`}>
                     <ClusterOutlined />
                     风险主机 {riskHostCount}

@@ -9,7 +9,7 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
 
   await expect(page.getByText('全局主机态势')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('heading', { name: 'Claude Agent' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.control-workbench__agent').getByRole('heading', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/hosts/1')

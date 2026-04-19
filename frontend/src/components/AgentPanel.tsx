@@ -142,7 +142,7 @@ export function AgentPanel() {
         <div>
           <div className="page-kicker">Agent</div>
           <Typography.Title level={4} style={{ margin: 0 }}>
-            Claude Agent
+            XFusion Agent
           </Typography.Title>
           <Typography.Text type="secondary">
             右侧常驻会话面板，当前任务执行链路使用 Claude Agent SDK 做意图规划与结果解释。
