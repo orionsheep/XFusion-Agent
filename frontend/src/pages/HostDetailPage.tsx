@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Card, Col, Descriptions, List, Progress, Row, Space, Button, Typography } from 'antd'
+import { Button, Card, Col, Descriptions, List, Progress, Row, Space, Tag, Typography } from 'antd'
 import { useParams } from 'react-router-dom'
 import { discoverHost, fetchHost, fetchHostMetrics, profileHost } from '../services/api'
 
@@ -32,6 +32,7 @@ export function HostDetailPage() {
   }
 
   const metrics = data.metrics_json ?? {}
+  const externalLinks = data.external_links ?? []
 
   return (
     <div className="content-stack">
@@ -93,6 +94,36 @@ export function HostDetailPage() {
               <List.Item.Meta
                 title={service.name}
                 description={`${service.runtime_type} · ${service.status} · ${service.ports?.join(', ') || 'no exposed ports'}`}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card title="外部监控与管理入口">
+        <List
+          dataSource={externalLinks}
+          renderItem={(item: any) => (
+            <List.Item
+              actions={[
+                <Button key="open" href={item.url} target="_blank">
+                  打开
+                </Button>,
+              ]}
+            >
+              <List.Item.Meta
+                title={
+                  <Space>
+                    <Typography.Text strong>{item.title}</Typography.Text>
+                    <Tag>{item.category}</Tag>
+                  </Space>
+                }
+                description={
+                  <Space direction="vertical" size={2}>
+                    <Typography.Text type="secondary">{item.description}</Typography.Text>
+                    <Typography.Text code>{item.url}</Typography.Text>
+                  </Space>
+                }
               />
             </List.Item>
           )}

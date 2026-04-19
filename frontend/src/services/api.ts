@@ -109,3 +109,8 @@ export async function fetchAudit() {
   const { data } = await api.get('/audit')
   return data
 }
+
+export async function fetchIntegrations() {
+  const { data } = await api.get('/integrations')
+  return data
+}

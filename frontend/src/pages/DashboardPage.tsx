@@ -1,12 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
-import { Card, Col, List, Progress, Row, Skeleton, Statistic, Tag, Typography } from 'antd'
+import { Button, Card, Col, List, Progress, Row, Skeleton, Statistic, Tag, Typography } from 'antd'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { fetchOverview } from '../services/api'
+import { fetchIntegrations, fetchOverview } from '../services/api'
 
 export function DashboardPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['overview'],
     queryFn: fetchOverview,
+  })
+  const { data: integrations } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: fetchIntegrations,
   })
 
   if (isLoading) {
@@ -32,6 +36,33 @@ export function DashboardPage() {
         <Card><Statistic title="已发现服务" value={stats.services ?? 0} /></Card>
         <Card><Statistic title="待审批任务" value={stats.pending_approvals ?? 0} /></Card>
       </div>
+
+      <Card title="开源监控与管理底座">
+        <div className="card-grid">
+          {(integrations?.providers ?? []).map((provider: any) => (
+            <Card key={provider.key} size="small">
+              <Typography.Title level={5} style={{ marginTop: 0 }}>
+                {provider.name}
+              </Typography.Title>
+              <Typography.Paragraph style={{ minHeight: 44 }}>
+                {provider.description}
+              </Typography.Paragraph>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <Tag color={provider.status?.reachable ? 'green' : provider.status?.configured ? 'gold' : 'default'}>
+                  {provider.status?.reachable ? 'reachable' : provider.status?.configured ? 'configured' : 'unconfigured'}
+                </Tag>
+                {provider.url ? (
+                  <Button size="small" href={provider.url} target="_blank">
+                    打开
+                  </Button>
+                ) : (
+                  <Typography.Text type="secondary">按主机接入</Typography.Text>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      </Card>
 
       <div className="two-col">
         <Card title="主机健康概览">

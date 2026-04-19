@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     default_admin_password: str = "admin123"
     token_expire_minutes: int = 60 * 12
     frontend_origin: str = "http://localhost:5173"
+    beszel_url: str | None = "http://localhost:8090"
+    beszel_internal_url: str | None = None
+    prometheus_url: str | None = "http://localhost:9090"
+    prometheus_internal_url: str | None = None
+    portainer_url: str | None = "http://localhost:9000"
+    portainer_internal_url: str | None = None
+    cockpit_scheme: str = "https"
+    cockpit_port: int = 9090
+    node_exporter_scheme: str = "http"
+    node_exporter_port: int = 9100
 
 
 @lru_cache

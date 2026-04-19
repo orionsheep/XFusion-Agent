@@ -1,12 +1,22 @@
-import { Card, Descriptions, List, Typography } from 'antd'
-import { API_BASE_URL } from '../services/api'
+import { useQuery } from '@tanstack/react-query'
+import { Card, Descriptions, List, Skeleton, Tag, Typography } from 'antd'
+import { API_BASE_URL, fetchIntegrations } from '../services/api'
 
 export function SettingsPage() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: fetchIntegrations,
+  })
+
+  if (isLoading) {
+    return <Skeleton active paragraph={{ rows: 12 }} />
+  }
+
   return (
     <div className="content-stack">
       <div>
         <h1 className="page-title">系统设置</h1>
-        <p className="page-subtitle">当前实现的核心边界、依赖和运行入口。</p>
+        <p className="page-subtitle">当前运行配置，以及 Beszel / Cockpit / Portainer / Prometheus 的统一接入信息。</p>
       </div>
 
       <Card title="运行配置">
@@ -18,7 +28,48 @@ export function SettingsPage() {
         </Descriptions>
       </Card>
 
-      <Card title="V1.0 已交付模块">
+      <Card title="开源底座接入状态">
+        <List
+          dataSource={data?.providers ?? []}
+          renderItem={(item: any) => (
+            <List.Item>
+              <List.Item.Meta
+                title={item.name}
+                description={
+                  <Typography.Paragraph style={{ marginBottom: 0 }}>
+                    {item.description}
+                    {item.url ? (
+                      <>
+                        <br />
+                        <Typography.Text code>{item.url}</Typography.Text>
+                      </>
+                    ) : null}
+                  </Typography.Paragraph>
+                }
+              />
+              <Tag color={item.status?.reachable ? 'green' : item.status?.configured ? 'gold' : 'default'}>
+                {item.status?.reachable ? 'reachable' : item.status?.configured ? 'configured' : 'unconfigured'}
+              </Tag>
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card title="部署模板">
+        <List
+          dataSource={data?.deployment_templates ?? []}
+          renderItem={(item: any) => (
+            <List.Item>
+              <List.Item.Meta
+                title={item.title}
+                description={<Typography.Text code>{item.command}</Typography.Text>}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card title="V1.1 已交付模块">
         <List
           dataSource={[
             '用户登录与基础角色控制',
@@ -26,7 +77,8 @@ export function SettingsPage() {
             '服务自动发现与统一展示',
             'Goal-driven 任务中心',
             '审批中心与审计日志',
-            'Node Agent 样例服务',
+            'Beszel / Prometheus / Portainer 统一集成入口',
+            'Cockpit / Node Exporter / Beszel Agent 安装脚本模板',
           ]}
           renderItem={(item) => <List.Item>{item}</List.Item>}
         />
@@ -34,8 +86,8 @@ export function SettingsPage() {
 
       <Card title="注意事项">
         <Typography.Paragraph>
-          Claude Agent SDK 需要在运行环境中可用，并在配置好 Anthropic 凭据后才能启用完整 AI 规划能力。
-          当前版本已将 SDK 依赖和工具接入位留在后端。
+          Claude Agent SDK 仍然是中央控制平面的编排层。基础监控与管理能力已经开始切换为开源底座模式，
+          当前项目负责统一入口、审批、审计和 AI 任务编排，而不再重复造监控和管理轮子。
         </Typography.Paragraph>
       </Card>
     </div>

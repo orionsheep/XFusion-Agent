@@ -18,6 +18,8 @@
 - Fleet / Host / Task / Approval / Audit Web 控制台
 - Node Agent 示例服务
 - OPA 策略文件
+- Beszel / Prometheus / Portainer 集成入口
+- Cockpit / Node Exporter / Beszel Agent 安装脚本模板
 
 ## 采用的开源组件
 
@@ -30,6 +32,11 @@
 - `Recharts`
 - `Open Policy Agent`
 - `Vite`
+- `Beszel`
+- `Prometheus`
+- `Portainer CE`
+- `Cockpit`
+- `node_exporter`
 
 ## 目录结构
 
@@ -39,7 +46,7 @@ XFusion-Agent/
 ├── frontend/         # Web 控制台
 ├── agent/            # Node Agent 示例实现
 ├── docs/             # PRD 与文档
-├── infra/opa/        # OPA 策略
+├── infra/            # OPA、Prometheus、安装脚本
 └── docker-compose.yml
 ```
 
@@ -83,6 +90,15 @@ cd /Users/mychanging/Desktop/XFusion-Agent
 docker compose up --build
 ```
 
+这会把以下服务一并拉起：
+
+- `backend` 控制平面
+- `frontend` Web 控制台
+- `opa` 策略引擎
+- `beszel` 监控中心
+- `prometheus` 指标中心
+- `portainer` 容器管理平台
+
 ## 默认账号
 
 - 用户名：`admin`
@@ -96,6 +112,20 @@ docker compose up --build
 - `/approvals` 审批中心
 - `/audit` 审计日志
 - `/settings` 系统设置
+
+## 开源底座入口
+
+- Beszel: `http://localhost:8090`
+- Prometheus: `http://localhost:9090`
+- Portainer CE: `http://localhost:9000`
+- Cockpit: 按主机安装后访问 `https://<host>:9090`
+- Node Exporter: 按主机安装后访问 `http://<host>:9100/metrics`
+
+安装脚本：
+
+- [infra/scripts/install-cockpit.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-cockpit.sh)
+- [infra/scripts/install-node-exporter.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-node-exporter.sh)
+- [infra/scripts/install-beszel-agent.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-beszel-agent.sh)
 
 ## API 概览
 

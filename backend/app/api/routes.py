@@ -26,6 +26,7 @@ from ..services.platform import (
     serialize_model,
     upsert_audit,
 )
+from ..services.integrations import IntegrationCatalog
 from ..services.security import (
     authenticate_user,
     create_access_token,
@@ -36,6 +37,12 @@ from ..services.security import (
 
 
 router = APIRouter()
+
+
+def serialize_host(host: Host) -> dict:
+    payload = serialize_model(host)
+    payload["external_links"] = IntegrationCatalog.host_links(host)
+    return payload
 
 
 @router.get("/health")
@@ -75,7 +82,7 @@ def list_hosts(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[dict]:
     hosts = HostRepository.list_hosts(session)
-    return [serialize_model(host) for host in hosts]
+    return [serialize_host(host) for host in hosts]
 
 
 @router.post("/hosts")
@@ -85,7 +92,7 @@ def create_host(
     current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
 ) -> dict:
     host = HostRepository.create_host(session, payload.model_dump())
-    host_payload = serialize_model(host)
+    host_payload = serialize_host(host)
     upsert_audit(session, actor_id=current_user.id, host_id=host.id, event_type="host_created", payload=host_payload)
     return host_payload
 
@@ -99,7 +106,7 @@ def get_host(
     host = HostRepository.get_host(session, host_id)
     services = session.exec(select(Service).where(Service.host_id == host_id)).all()
     return {
-        **serialize_model(host),
+        **serialize_host(host),
         "services": [serialize_model(service) for service in services],
     }
 
@@ -227,6 +234,13 @@ def list_audit_logs(
 ) -> list[dict]:
     logs = session.exec(select(AuditLog).order_by(AuditLog.id.desc()).limit(200)).all()
     return [serialize_model(log) for log in logs]
+
+
+@router.get("/integrations")
+async def list_integrations(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    return await IntegrationCatalog.summary()
 
 
 @router.post("/agents/register")
