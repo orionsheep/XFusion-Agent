@@ -7,19 +7,20 @@
 | PDF 要求 | 项目实现 | 验证方式 |
 |---|---|---|
 | 可运行或可交互的工具实现 | Web 控制台 + FastAPI 后端 + Node Agent | 访问 `http://127.0.0.1:5173`，登录后可见 Dashboard/Hosts/Tasks/Approvals/Audit |
-| 磁盘使用情况监测 | `query_disk` 动作 + 主机页资源快照 + Prometheus 摘要 | `scripts/verify_pdf_requirements.py` |
+| 磁盘使用情况监测 | `query_disk` 动作 + 主机页资源快照 + 内建监控摘要 | `scripts/verify_pdf_requirements.py` |
 | 文件或目录检索 | `search_files` 动作 | `scripts/verify_pdf_requirements.py` |
 | 进程及端口状态查询 | `query_process` / `check_port` 动作 | `scripts/verify_pdf_requirements.py` |
 | 普通用户创建与删除 | `create_linux_user` / `delete_linux_user` + 审批流 | `scripts/verify_pdf_requirements.py` |
 | 意图解析能力 | Claude Agent SDK 规划层输出结构化任务计划 | 任务详情页 `AI 计划` 面板 |
 | 任务执行能力 | SSH / Node Agent 双通道执行 | 真实 Linux 主机任务执行 |
+| 多主机统一执行 | 单任务可选择多台主机，统一生成计划、风险范围和逐主机结果 | `scripts/verify_pdf_requirements.py` |
 | 自然语言反馈能力 | Claude 总结 + 任务步骤 + 审计日志 | 任务详情页、审计页 |
 
 ## 进阶能力
 
 | PDF 要求 | 项目实现 | 验证方式 |
 |---|---|---|
-| 高风险/敏感操作识别 | OPA + 本地策略引擎识别 `delete_path` / `modify_security_config` / `bulk_permission_change` | 提交 `删除 /etc/passwd` |
+| 高风险/敏感操作识别 | 内建策略引擎识别 `delete_path` / `modify_security_config` / `bulk_permission_change` | 提交 `删除 /etc/passwd` |
 | 风险预警及二次确认 | `Approval` 模型 + 审批中心 | 创建/删除用户任务 |
 | 操作范围限制与截断 | 文件检索路径裁剪 + 危险路径阻断 | 任务结果中的 `blast_radius` |
 | 拒绝不合理或非法高风险指令 | `delete_path` 等直接失败 | `scripts/verify_pdf_requirements.py` |
@@ -45,6 +46,7 @@ cd /Users/mychanging/Desktop/XFusion-Agent
 
 该脚本会对真实已纳管主机执行：
 
+- 多主机统一磁盘查询
 - 磁盘查询
 - 文件检索
 - 端口查询

@@ -4,7 +4,7 @@
 
 - 中央控制平面：`Claude Agent SDK`
 - 执行通道：`SSHConnector` / `Node Agent`
-- 风险判定：`OPA + 本地策略回退`
+- 风险判定：`内建策略核心`
 - 任务模型：`GoalDrivenOrchestrator`
 
 ## 核心 Prompt

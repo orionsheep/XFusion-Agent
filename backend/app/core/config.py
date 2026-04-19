@@ -24,22 +24,12 @@ class Settings(BaseSettings):
     )
     claude_enabled: bool = True
     claude_model: str = "sonnet"
-    opa_url: str | None = "http://localhost:8181/v1/data/xfusion/authz/decision"
     agent_shared_secret: str = "change-me-agent-secret"
     default_admin_username: str = "admin"
     default_admin_password: str = "admin123"
     token_expire_minutes: int = 60 * 12
     frontend_origin: str = "http://localhost:5173"
-    beszel_url: str | None = "http://localhost:8090"
-    beszel_internal_url: str | None = None
-    prometheus_url: str | None = "http://localhost:9090"
-    prometheus_internal_url: str | None = None
-    portainer_url: str | None = "http://localhost:9000"
-    portainer_internal_url: str | None = None
-    cockpit_scheme: str = "https"
-    cockpit_port: int = 9090
-    node_exporter_scheme: str = "http"
-    node_exporter_port: int = 9100
+    metric_collection_interval_seconds: int = 180
 
 
 @lru_cache

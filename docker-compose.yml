@@ -9,13 +9,6 @@ services:
       XFUSION_DATABASE_URL: sqlite:////app/backend/xfusion.db
       XFUSION_SECRET_KEY: local-dev-secret
       XFUSION_FRONTEND_ORIGIN: http://localhost:5173
-      XFUSION_OPA_URL: http://opa:8181/v1/data/xfusion/authz/decision
-      XFUSION_BESZEL_URL: http://localhost:8090
-      XFUSION_BESZEL_INTERNAL_URL: http://beszel:8090
-      XFUSION_PROMETHEUS_URL: http://localhost:9090
-      XFUSION_PROMETHEUS_INTERNAL_URL: http://prometheus:9090
-      XFUSION_PORTAINER_URL: http://localhost:9000
-      XFUSION_PORTAINER_INTERNAL_URL: http://portainer:9000
     volumes:
       - ./backend:/app/backend
 
@@ -41,55 +34,3 @@ services:
       - "9001:9001"
     volumes:
       - ./agent:/app/agent
-
-  opa:
-    image: openpolicyagent/opa:latest
-    command:
-      - "run"
-      - "--server"
-      - "--addr=0.0.0.0:8181"
-      - "/policy/xfusion.rego"
-    ports:
-      - "8181:8181"
-    volumes:
-      - ./infra/opa/policies:/policy
-
-  beszel:
-    image: henrygd/beszel:latest
-    restart: unless-stopped
-    environment:
-      APP_URL: http://localhost:8090
-    ports:
-      - "8090:8090"
-    volumes:
-      - beszel_data:/beszel_data
-
-  prometheus:
-    image: prom/prometheus:latest
-    restart: unless-stopped
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--web.enable-lifecycle"
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./infra/prometheus/file_sd:/etc/prometheus/file_sd:ro
-      - prometheus_data:/prometheus
-
-  portainer:
-    image: portainer/portainer-ce:lts
-    restart: unless-stopped
-    command: -H unix:///var/run/docker.sock
-    ports:
-      - "9000:9000"
-      - "9443:9443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-
-volumes:
-  beszel_data:
-  prometheus_data:
-  portainer_data:

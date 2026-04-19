@@ -10,9 +10,10 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import Session, select
 
-from ..models.entities import Approval, Host, HostCredential, Task, TaskStep, User
+from ..models.entities import Approval, Host, HostCredential, Service, Task, TaskStep, User
 from .platform import (
     AgentConnector,
     DashboardService,
@@ -25,6 +26,7 @@ from .platform import (
     settings,
     upsert_audit,
 )
+from .monitoring import MonitoringCoreService
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
@@ -92,6 +94,25 @@ def _recent_task_context(session: Session, session_id: str, limit: int = 5) -> l
     ]
 
 
+def _session_continuation_context(session: Session, session_id: str) -> dict[str, Any]:
+    latest = session.exec(
+        select(Task)
+        .where(Task.session_id == session_id)
+        .order_by(Task.id.desc())
+        .limit(1)
+    ).first()
+    if not latest:
+        return {}
+    plan_json = latest.plan_json or {}
+    return {
+        "last_task_id": latest.id,
+        "last_action_type": plan_json.get("action_type"),
+        "last_parameters": plan_json.get("parameters") or {},
+        "last_goal": latest.goal,
+        "last_result": latest.result_json,
+    }
+
+
 @dataclass
 class IntentPlan:
     task_type: str
@@ -101,6 +122,7 @@ class IntentPlan:
     criteria: list[dict[str, Any]]
     parameters: dict[str, Any]
     explanation: str
+    planning_source: str = "fallback"
 
 
 class ClaudePlanner:
@@ -196,6 +218,7 @@ class ClaudePlanner:
                 criteria=result.get("criteria") if isinstance(result.get("criteria"), list) else [],
                 parameters=result.get("parameters") if isinstance(result.get("parameters"), dict) else {},
                 explanation=str(result.get("explanation") or ""),
+                planning_source="claude",
             )
         except Exception:
             return None
@@ -281,12 +304,26 @@ class GoalDrivenOrchestrator:
         self.session = session
         self.user = user
 
-    def _fallback_plan(self, prompt: str) -> IntentPlan:
+    def _fallback_plan(self, prompt: str, session_context: dict[str, Any] | None = None) -> IntentPlan:
         lowered = prompt.lower()
         username_match = re.search(r"(?:用户|账号|user)\s*[:：]?\s*([a-zA-Z][\w-]{1,30})", prompt)
         service_match = re.search(r"(?:服务|service)\s*[:：]?\s*([a-zA-Z0-9._-]+)", prompt)
         path_match = re.search(r"(/[\w./-]+)", prompt)
         port_match = re.search(r"(\d{2,5})\s*(?:端口|port)", prompt)
+        previous_parameters = (session_context or {}).get("last_parameters") or {}
+        continuation_words = ["继续", "接着", "再", "日志", "继续看", "continue", "follow-up"]
+
+        if any(word in prompt for word in continuation_words) and previous_parameters.get("service_name"):
+            return IntentPlan(
+                task_type="diagnose",
+                action_type="diagnose_service",
+                title="延续上一轮服务排障",
+                goal=f"基于上一轮上下文继续排查服务: {prompt}",
+                criteria=[{"type": "diagnosis_ready"}, {"type": "context_reused"}],
+                parameters={"service_name": previous_parameters.get("service_name")},
+                explanation=f"复用了 session 上下文中的服务名 {previous_parameters.get('service_name')} 继续诊断。",
+            )
+
         if "磁盘" in prompt or "disk" in lowered:
             return IntentPlan(
                 task_type="query",
@@ -409,11 +446,13 @@ class GoalDrivenOrchestrator:
                 criteria=[{"type": "diagnosis_ready"}, {"type": "approval_if_action_required"}],
                 parameters={"service_name": service_name or "sshd"},
                 explanation="该请求语义上是诊断服务状态，而不是修改安全配置。",
+                planning_source=plan.planning_source,
             )
 
         return plan
 
     async def _build_plan(self, prompt: str, host: Host, selected_hosts: list[int], session_id: str) -> IntentPlan:
+        session_context = _session_continuation_context(self.session, session_id)
         plan = await ClaudePlanner.plan_task(
             prompt=prompt,
             host=host,
@@ -421,7 +460,19 @@ class GoalDrivenOrchestrator:
             session=self.session,
             session_id=session_id,
         )
-        return self._normalize_plan(prompt, plan or self._fallback_plan(prompt))
+        normalized = self._normalize_plan(prompt, plan or self._fallback_plan(prompt, session_context))
+        if session_context and "context_reused" in json.dumps(normalized.criteria, ensure_ascii=False):
+            normalized.parameters = {**normalized.parameters, "_context_reused": True}
+        elif session_context and session_context.get("last_parameters", {}).get("service_name"):
+            prompt_has_service = bool(re.search(r"(?:服务|service)\s*[:：]?\s*([a-zA-Z0-9._-]+)", prompt))
+            if not prompt_has_service and normalized.action_type == "diagnose_service":
+                normalized.parameters = {
+                    **normalized.parameters,
+                    "service_name": normalized.parameters.get("service_name") or session_context["last_parameters"].get("service_name"),
+                    "_context_reused": True,
+                }
+                normalized.explanation = f"{normalized.explanation} 已复用上一轮 session 上下文中的服务名。".strip()
+        return normalized
 
     async def _execute_action(
         self,
@@ -569,11 +620,40 @@ class GoalDrivenOrchestrator:
         )
         self.session.commit()
 
+    def _audit_hosts(
+        self,
+        *,
+        hosts: list[Host],
+        actor_id: int | None,
+        task_id: int,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if not hosts:
+            upsert_audit(
+                self.session,
+                actor_id=actor_id,
+                task_id=task_id,
+                host_id=None,
+                event_type=event_type,
+                payload=payload,
+            )
+            return
+        for host in hosts:
+            upsert_audit(
+                self.session,
+                actor_id=actor_id,
+                task_id=task_id,
+                host_id=host.id,
+                event_type=event_type,
+                payload=payload,
+            )
+
     async def _request_approval(
         self,
         *,
         task: Task,
-        host: Host,
+        hosts: list[Host],
         action_type: str,
         parameters: dict[str, Any],
         explanation: str,
@@ -586,7 +666,7 @@ class GoalDrivenOrchestrator:
             action_payload={
                 "action_type": action_type,
                 "parameters": parameters,
-                "host_id": host.id,
+                "host_ids": [host.id for host in hosts],
                 "explanation": explanation,
                 "policy": policy,
             },
@@ -604,11 +684,10 @@ class GoalDrivenOrchestrator:
             input_json={"action_type": action_type, "parameters": parameters},
             output_json=approval.action_payload,
         )
-        upsert_audit(
-            self.session,
+        self._audit_hosts(
+            hosts=hosts,
             actor_id=self.user.id,
             task_id=task.id,
-            host_id=host.id,
             event_type="approval_requested",
             payload=approval.action_payload,
         )
@@ -618,54 +697,87 @@ class GoalDrivenOrchestrator:
         self,
         *,
         task: Task,
-        host: Host,
-        credential: HostCredential | None,
+        hosts: list[Host],
+        credentials: dict[int, HostCredential | None],
         plan: IntentPlan,
     ) -> Task:
-        act_result = await self._execute_action(host, credential, plan.action_type, plan.parameters)
+        read_only_actions = {"query_disk", "search_files", "check_port", "query_process"}
+        per_host_results: list[dict[str, Any]] = []
+        for host in hosts:
+            credential = credentials.get(host.id)
+            act_result = await self._execute_action(host, credential, plan.action_type, plan.parameters)
+            if plan.action_type in read_only_actions:
+                verify_result = {
+                    "success": bool(act_result.get("success", False)),
+                    "exit_code": 0 if act_result.get("success", False) else act_result.get("exit_code", 1),
+                    "stdout": "Primary read-only execution accepted as verification evidence.",
+                    "stderr": act_result.get("stderr", ""),
+                }
+            else:
+                verify_result = await self._verify(host, credential, plan.action_type, plan.parameters)
+            host_success = bool(act_result.get("success", False)) and bool(verify_result.get("success", False))
+            per_host_results.append(
+                {
+                    "host_id": host.id,
+                    "host_name": host.name,
+                    "action_result": jsonable(act_result),
+                    "verification_result": jsonable(verify_result),
+                    "success": host_success,
+                }
+            )
         self._record_step(
             task_id=task.id,
             step_type="act",
             title="执行主动作",
-            status="completed" if act_result.get("success") else "failed",
-            input_json={"action_type": plan.action_type, "parameters": plan.parameters},
-            output_json=act_result,
-            retryable=bool(act_result.get("retryable")),
+            status="completed" if all(item["action_result"].get("success") for item in per_host_results) else "failed",
+            input_json={"action_type": plan.action_type, "parameters": plan.parameters, "host_ids": [host.id for host in hosts]},
+            output_json={"per_host": per_host_results},
+            retryable=False,
         )
-        verify_result = await self._verify(host, credential, plan.action_type, plan.parameters)
         self._record_step(
             task_id=task.id,
             step_type="verify",
             title="校验成功标准",
-            status="completed",
+            status="completed" if all(item["verification_result"].get("success") for item in per_host_results) else "failed",
             input_json={"criteria": task.criteria_json},
-            output_json=verify_result,
+            output_json={"per_host": per_host_results},
         )
-        summary = await ClaudePlanner.explain_result(
-            prompt=task.prompt,
-            host=host,
-            plan=plan,
-            action_result=act_result,
-            verification_result=verify_result,
+        first_host = hosts[0]
+        success = all(item["success"] for item in per_host_results)
+        summary = None
+        if len(hosts) == 1:
+            summary = await ClaudePlanner.explain_result(
+                prompt=task.prompt,
+                host=first_host,
+                plan=plan,
+                action_result=per_host_results[0]["action_result"],
+                verification_result=per_host_results[0]["verification_result"],
+            )
+        host_statuses = "，".join(
+            f"{item['host_name']}:{'成功' if item['success'] else '失败'}" for item in per_host_results
         )
-        task.status = "succeeded" if act_result.get("success", False) else "failed"
+        task.status = "succeeded" if success else "failed"
         task.result_json = {
             "summary": summary
-            or f"{plan.title}已执行，状态为{'成功' if act_result.get('success') else '失败'}。",
-            "action_result": jsonable(act_result),
-            "verification_result": jsonable(verify_result),
+            or f"{plan.title}已在 {len(hosts)} 台主机上执行；{host_statuses}。",
+            "per_host": per_host_results,
         }
         task.updated_at = now()
         self.session.add(task)
         self.session.commit()
-        upsert_audit(
-            self.session,
-            actor_id=self.user.id,
-            task_id=task.id,
-            host_id=host.id,
-            event_type="task_finished",
-            payload=task.result_json,
-        )
+        for item in per_host_results:
+            upsert_audit(
+                self.session,
+                actor_id=self.user.id,
+                task_id=task.id,
+                host_id=item["host_id"],
+                event_type="task_finished",
+                payload={
+                    "summary": task.result_json["summary"],
+                    "host_result": item,
+                    "host_count": len(per_host_results),
+                },
+            )
         return task
 
     async def _run_diagnosis_flow(
@@ -757,29 +869,51 @@ class GoalDrivenOrchestrator:
             self.session.commit()
             return await self._request_approval(
                 task=task,
-                host=host,
+                hosts=[host],
                 action_type=recommendation_plan.action_type,
                 parameters=recommendation_plan.parameters,
                 explanation=recommendation_plan.explanation,
                 policy=policy,
             )
-        return await self._run_act_and_verify(task=task, host=host, credential=credential, plan=recommendation_plan)
+        return await self._run_act_and_verify(task=task, hosts=[host], credentials={host.id: credential}, plan=recommendation_plan)
+
+    def _blast_radius(self, selected_host_ids: list[int], parameters: dict[str, Any]) -> dict[str, Any]:
+        services = list(
+            self.session.exec(select(Service).where(Service.host_id.in_(selected_host_ids))).all()
+        ) if selected_host_ids else []
+        return {
+            "hosts": len(selected_host_ids),
+            "services": len(services),
+            "paths": [parameters.get("path")] if parameters.get("path") else [],
+        }
 
     async def execute(self, prompt: str, session_id: str, selected_host_ids: list[int], auto_approve: bool) -> Task:
         if not selected_host_ids:
             raise HTTPException(status_code=400, detail="At least one host must be selected")
 
-        host = HostRepository.get_host(self.session, selected_host_ids[0])
-        credential = HostRepository.get_credential(self.session, host.id)
+        hosts = [HostRepository.get_host(self.session, host_id) for host_id in selected_host_ids]
+        credentials = {host.id: HostRepository.get_credential(self.session, host.id) for host in hosts}
+        host = hosts[0]
+        credential = credentials[host.id]
 
-        live_metrics = await HostInspector.metrics(host, credential)
-        host.metrics_json = live_metrics
-        host.last_seen_at = now()
-        self.session.add(host)
-        self.session.commit()
+        live_metrics_by_host: dict[int, dict[str, Any]] = {}
+        for target_host in hosts:
+            target_credential = credentials[target_host.id]
+            metrics = await HostInspector.metrics(target_host, target_credential)
+            target_host.metrics_json = metrics
+            target_host.last_seen_at = now()
+            self.session.add(target_host)
+            self.session.commit()
+            MonitoringCoreService.record_sample(self.session, host=target_host, metrics=metrics, source="task-entry")
+            live_metrics_by_host[target_host.id] = {
+                "host": {"id": target_host.id, "name": target_host.name, "address": target_host.address},
+                "metrics": metrics,
+            }
+        live_metrics = live_metrics_by_host[host.id]["metrics"]
 
         plan = await self._build_plan(prompt, host, selected_host_ids, session_id)
         policy = PolicyEngine.evaluate(plan.action_type, plan.parameters, host)
+        policy["blast_radius"] = self._blast_radius(selected_host_ids, plan.parameters)
         task = self._create_task(
             prompt=prompt,
             session_id=session_id,
@@ -789,7 +923,8 @@ class GoalDrivenOrchestrator:
             claude_metadata={
                 "claude_enabled": settings.claude_enabled,
                 "credentials_available": _has_claude_credentials(),
-                "used_ai_planning": bool(_has_claude_credentials()),
+                "used_ai_planning": plan.planning_source == "claude",
+                "fallback_context_used": bool(plan.parameters.get("_context_reused")),
             },
         )
         self._record_step(
@@ -797,8 +932,8 @@ class GoalDrivenOrchestrator:
             step_type="observe",
             title="收集主机上下文",
             status="completed",
-            input_json={"host_id": host.id},
-            output_json={"host": {"name": host.name, "address": host.address}, "metrics": live_metrics},
+            input_json={"host_ids": [target_host.id for target_host in hosts]},
+            output_json={"hosts": list(live_metrics_by_host.values())},
         )
         self._record_step(
             task_id=task.id,
@@ -808,11 +943,10 @@ class GoalDrivenOrchestrator:
             input_json={"prompt": prompt},
             output_json={"plan": task.plan_json},
         )
-        upsert_audit(
-            self.session,
+        self._audit_hosts(
+            hosts=hosts,
             actor_id=self.user.id,
             task_id=task.id,
-            host_id=host.id,
             event_type="task_created",
             payload=task.plan_json,
         )
@@ -827,17 +961,22 @@ class GoalDrivenOrchestrator:
             task.updated_at = now()
             self.session.add(task)
             self.session.commit()
-            upsert_audit(
-                self.session,
+            self._audit_hosts(
+                hosts=hosts,
                 actor_id=self.user.id,
                 task_id=task.id,
-                host_id=host.id,
                 event_type="task_blocked",
                 payload=task.result_json,
             )
             return task
 
         if plan.action_type == "diagnose_service":
+            if len(hosts) > 1:
+                task.status = "failed"
+                task.result_json = {"summary": "服务级诊断当前要求精确选择单台主机执行。"}
+                self.session.add(task)
+                self.session.commit()
+                return task
             return await self._run_diagnosis_flow(
                 task=task,
                 host=host,
@@ -849,14 +988,14 @@ class GoalDrivenOrchestrator:
         if policy.get("approval_required") and not auto_approve:
             return await self._request_approval(
                 task=task,
-                host=host,
+                hosts=hosts,
                 action_type=plan.action_type,
                 parameters=plan.parameters,
                 explanation=plan.explanation,
                 policy=policy,
             )
 
-        return await self._run_act_and_verify(task=task, host=host, credential=credential, plan=plan)
+        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan)
 
     async def resume_after_approval(self, approval: Approval, approver: User, approved: bool, reason: str | None) -> Task:
         task = self.session.get(Task, approval.task_id)
@@ -874,26 +1013,25 @@ class GoalDrivenOrchestrator:
             task.result_json = {"summary": reason or "Approval rejected", "reason": reason}
             self.session.add(task)
             self.session.commit()
-            upsert_audit(
-                self.session,
+            self._audit_hosts(
+                hosts=[HostRepository.get_host(self.session, host_id) for host_id in (approval.action_payload.get("host_ids") or task.target_hosts)],
                 actor_id=approver.id,
                 task_id=task.id,
-                host_id=approval.action_payload.get("host_id"),
                 event_type="approval_rejected",
                 payload={"reason": reason},
             )
             return task
 
-        host = HostRepository.get_host(self.session, approval.action_payload["host_id"])
-        credential = HostRepository.get_credential(self.session, host.id)
+        host_ids = approval.action_payload.get("host_ids") or task.target_hosts
+        hosts = [HostRepository.get_host(self.session, host_id) for host_id in host_ids]
+        credentials = {host.id: HostRepository.get_credential(self.session, host.id) for host in hosts}
         task.status = "running"
         self.session.add(task)
         self.session.commit()
-        upsert_audit(
-            self.session,
+        self._audit_hosts(
+            hosts=hosts,
             actor_id=approver.id,
             task_id=task.id,
-            host_id=host.id,
             event_type="approval_granted",
             payload={"reason": reason},
         )
@@ -906,80 +1044,114 @@ class GoalDrivenOrchestrator:
             parameters=approval.action_payload.get("parameters") or {},
             explanation=str(approval.action_payload.get("explanation") or ""),
         )
-        return await self._run_act_and_verify(task=task, host=host, credential=credential, plan=plan)
+        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan)
 
 
 def build_validation_matrix(session: Session) -> list[dict[str, Any]]:
     overview = DashboardService.overview(session)
+    tasks = list(session.exec(select(Task)).all())
+    steps = list(session.exec(select(TaskStep)).all())
+
+    def has_task(action_type: str, *, status: str | None = None) -> bool:
+        for task in tasks:
+            if (task.plan_json or {}).get("action_type") != action_type:
+                continue
+            if status and task.status != status:
+                continue
+            return True
+        return False
+
+    def has_diagnose_steps() -> bool:
+        diagnose_tasks = [task.id for task in tasks if (task.plan_json or {}).get("action_type") == "diagnose_service"]
+        step_map = {}
+        for step in steps:
+            step_map.setdefault(step.task_id, set()).add(step.step_type)
+        return any({"observe", "analyze"} <= step_map.get(task_id, set()) for task_id in diagnose_tasks)
+
+    def has_feedback() -> bool:
+        return any(task.result_json.get("summary") for task in tasks if isinstance(task.result_json, dict))
+
+    def has_multiturn_context() -> bool:
+        counts = session.exec(select(Task.session_id, func.count(Task.id)).group_by(Task.session_id)).all()
+        repeated_sessions = {session_id for session_id, count in counts if session_id and count >= 2}
+        if not repeated_sessions:
+            return False
+        for task in tasks:
+            if task.session_id in repeated_sessions and isinstance(task.plan_json, dict):
+                ai_meta = task.plan_json.get("ai") or {}
+                if ai_meta.get("fallback_context_used"):
+                    return True
+        return False
+
     return [
         {
             "key": "basic_disk",
             "category": "基础能力",
             "requirement": "磁盘使用情况监测",
-            "status": "pass",
+            "status": "pass" if has_task("query_disk", status="succeeded") else "fail",
             "evidence": "query_disk action + Goal-driven task execution + host dashboard snapshot",
         },
         {
             "key": "basic_search",
             "category": "基础能力",
             "requirement": "文件或目录检索",
-            "status": "pass",
+            "status": "pass" if has_task("search_files", status="succeeded") else "fail",
             "evidence": "search_files action + file search prompt parsing",
         },
         {
             "key": "basic_process_port",
             "category": "基础能力",
             "requirement": "进程及端口状态查询",
-            "status": "pass",
+            "status": "pass" if has_task("query_process", status="succeeded") and has_task("check_port", status="succeeded") else "fail",
             "evidence": "query_process and check_port actions",
         },
         {
             "key": "basic_user",
             "category": "基础能力",
             "requirement": "普通用户创建与删除",
-            "status": "pass",
+            "status": "pass" if has_task("create_linux_user", status="succeeded") and has_task("delete_linux_user", status="succeeded") else "fail",
             "evidence": "create_linux_user/delete_linux_user with approval flow",
         },
         {
             "key": "nl_feedback",
             "category": "基础能力",
             "requirement": "过程与结果自然语言反馈",
-            "status": "pass",
+            "status": "pass" if has_feedback() else "fail",
             "evidence": "Claude result summary + task steps + audit trail",
         },
         {
             "key": "risk_control",
             "category": "进阶能力",
             "requirement": "高风险识别、预警、二次确认、拒绝非法请求",
-            "status": "pass",
-            "evidence": "OPA/local policy engine + approvals + blocked dangerous actions",
+            "status": "pass" if has_task("delete_path", status="failed") else "fail",
+            "evidence": "built-in policy core + approvals + blocked dangerous actions",
         },
         {
             "key": "explainability",
             "category": "进阶能力",
             "requirement": "行为可解释",
-            "status": "pass",
+            "status": "pass" if any(task.result_json.get("policy") or task.result_json.get("summary") for task in tasks if isinstance(task.result_json, dict)) else "fail",
             "evidence": "policy reason + diagnosis explanation + result summary",
         },
         {
             "key": "continuous_task",
             "category": "探索能力",
             "requirement": "多步连续任务编排与统一反馈",
-            "status": "pass",
+            "status": "pass" if has_diagnose_steps() else "fail",
             "evidence": "diagnose_service observe/analyze/act/verify flow",
         },
         {
             "key": "multiturn",
             "category": "探索能力",
             "requirement": "多轮对话上下文利用",
-            "status": "pass",
+            "status": "pass" if has_multiturn_context() else "fail",
             "evidence": f"session-based recent task context, current managed hosts={overview['stats']['hosts']}",
         },
         {
             "key": "de_cli",
             "category": "探索能力",
             "requirement": "去命令行化 Web 管理体验",
-            "status": "pass",
+            "status": "pass" if overview["stats"]["hosts"] >= 1 else "fail",
             "evidence": "Dashboard/Hosts/Tasks/Approvals/Audit pages",
         },
     ]

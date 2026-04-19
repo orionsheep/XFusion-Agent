@@ -8,7 +8,7 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await page.getByRole('button', { name: '进入控制台' }).click()
 
   await expect(page.getByText('Fleet Dashboard')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText('开源监控与管理底座')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('内建能力内核')).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/tasks')
   await expect(page.getByText('Goal-driven 任务中心')).toBeVisible({ timeout: 15_000 })

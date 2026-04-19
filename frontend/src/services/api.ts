@@ -120,8 +120,8 @@ export async function fetchIntegrations() {
   return data
 }
 
-export async function syncPrometheusTargets() {
-  const { data } = await api.post('/integrations/prometheus/sync')
+export async function collectMonitoringSnapshots() {
+  const { data } = await api.post('/monitoring/collect')
   return data
 }
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Col, Descriptions, List, Progress, Row, Segmented, Space, Tag, Typography } from 'antd'
+import { Button, Card, Col, Descriptions, List, Progress, Row, Segmented, Space, Typography } from 'antd'
 import { useMemo, useState } from 'react'
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useParams } from 'react-router-dom'
@@ -83,7 +83,6 @@ export function HostDetailPage() {
   }
 
   const metrics = data.metrics_json ?? {}
-  const externalLinks = data.external_links ?? []
   const monitoringValues = monitoringSummary?.values ?? {}
 
   return (
@@ -143,14 +142,14 @@ export function HostDetailPage() {
 
       <Row gutter={16}>
         <Col xs={24} xl={8}>
-          <Card title="Prometheus 即时摘要">
+          <Card title="内建监控摘要">
             <Space direction="vertical" style={{ width: '100%' }}>
               <div>
-                <Typography.Text>抓取状态</Typography.Text>
+                <Typography.Text>采样状态</Typography.Text>
                 <Progress
                   percent={monitoringValues.up ? 100 : 0}
                   strokeColor={monitoringValues.up ? '#0f766e' : '#dc2626'}
-                  format={() => (monitoringValues.up ? 'up' : 'down')}
+                  format={() => (monitoringValues.up ? 'online' : 'offline')}
                 />
               </div>
               <div>
@@ -171,7 +170,7 @@ export function HostDetailPage() {
         </Col>
         <Col xs={24} xl={16}>
           <Card
-            title="Prometheus 历史曲线"
+            title="资源历史曲线"
             extra={
               <Segmented
                 size="small"
@@ -217,42 +216,12 @@ export function HostDetailPage() {
 
       <Card title="高占用进程">
         <List
-          dataSource={metrics.top_processes ?? []}
+          dataSource={monitoringSummary?.top_processes ?? metrics.top_processes ?? []}
           renderItem={(item: any) => (
             <List.Item>
               <List.Item.Meta
                 title={`${item.command} (#${item.pid})`}
                 description={`user=${item.user} · CPU=${item.cpu_percent}% · MEM=${item.mem_percent}%`}
-              />
-            </List.Item>
-          )}
-        />
-      </Card>
-
-      <Card title="外部监控与管理入口">
-        <List
-          dataSource={externalLinks}
-          renderItem={(item: any) => (
-            <List.Item
-              actions={[
-                <Button key="open" href={item.url} target="_blank">
-                  打开
-                </Button>,
-              ]}
-            >
-              <List.Item.Meta
-                title={
-                  <Space>
-                    <Typography.Text strong>{item.title}</Typography.Text>
-                    <Tag>{item.category}</Tag>
-                  </Space>
-                }
-                description={
-                  <Space direction="vertical" size={2}>
-                    <Typography.Text type="secondary">{item.description}</Typography.Text>
-                    <Typography.Text code>{item.url}</Typography.Text>
-                  </Space>
-                }
               />
             </List.Item>
           )}

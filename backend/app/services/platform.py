@@ -201,29 +201,6 @@ class AgentConnector:
 class PolicyEngine:
     @staticmethod
     def evaluate(action_type: str, parameters: dict[str, Any], host: Host) -> dict[str, Any]:
-        input_payload = {
-            "action_type": action_type,
-            "parameters": parameters,
-            "host": {
-                "id": host.id,
-                "name": host.name,
-                "environment": host.environment,
-                "risk_level": host.risk_level,
-            },
-        }
-        if settings.opa_url:
-            try:
-                response = httpx.post(settings.opa_url, json={"input": input_payload}, timeout=4.0)
-                response.raise_for_status()
-                result = response.json().get("result", {})
-                if isinstance(result, dict) and {"allowed", "risk_level", "approval_required"} <= set(result):
-                    return result
-                decision = result.get("decision") if isinstance(result, dict) else None
-                if isinstance(decision, dict):
-                    return decision
-            except Exception:
-                pass
-
         blast_radius = {"hosts": 1, "services": 1, "paths": [parameters.get("path")] if parameters.get("path") else []}
         if action_type in {"query_disk", "search_files", "check_port", "query_process", "discover_services", "diagnose_service"}:
             return {

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Button, Card, Col, List, Progress, Row, Skeleton, Statistic, Tag, Typography } from 'antd'
+import { Card, Col, List, Progress, Row, Skeleton, Statistic, Tag, Typography } from 'antd'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { fetchIntegrations, fetchOverview } from '../services/api'
 
@@ -37,7 +37,7 @@ export function DashboardPage() {
         <Card><Statistic title="待审批任务" value={stats.pending_approvals ?? 0} /></Card>
       </div>
 
-      <Card title="开源监控与管理底座">
+      <Card title="内建能力内核">
         <div className="card-grid">
           {(integrations?.providers ?? []).map((provider: any) => (
             <Card key={provider.key} size="small">
@@ -48,16 +48,14 @@ export function DashboardPage() {
                 {provider.description}
               </Typography.Paragraph>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                <Tag color={provider.status?.reachable ? 'green' : provider.status?.configured ? 'gold' : 'default'}>
-                  {provider.status?.reachable ? 'reachable' : provider.status?.configured ? 'configured' : 'unconfigured'}
+                <Tag color={provider.status?.reachable ? 'green' : 'default'}>
+                  {provider.status?.reachable ? 'active' : 'inactive'}
                 </Tag>
-                {provider.url ? (
-                  <Button size="small" href={provider.url} target="_blank">
-                    打开
-                  </Button>
-                ) : (
-                  <Typography.Text type="secondary">按主机接入</Typography.Text>
-                )}
+                <Typography.Text type="secondary">
+                  {Object.entries(provider.stats ?? {})
+                    .map(([key, value]) => `${key}:${value}`)
+                    .join(' · ') || 'first-party'}
+                </Typography.Text>
               </div>
             </Card>
           ))}

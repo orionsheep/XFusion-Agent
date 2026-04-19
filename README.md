@@ -1,43 +1,17 @@
 # XFusion-Agent
 
-操作系统智能代理，基于 `goal-driven` 理念构建的 AI 运维控制平面，面向多台 Linux 服务器的纳管、观测、执行、审批和审计。
+面向 Linux 服务器的 AI 运维控制平面。目标不是把一堆第三方控制台拼在一起，而是把监控、服务发现、策略门禁、任务编排和审计统一收敛成 `XFusion Agent` 自己的一套服务。
 
-项目核心目标不是“给服务器加一个聊天框”，而是把以下几件事统一起来：
+## 当前能力
 
-- `Goal`：用户真正想完成的运维目标
-- `Criteria`：判断任务是否成功的明确标准
-- `Master Orchestration`：中央控制平面负责任务拆解、审批挂起、结果验收
-- `Substrate`：通过 SSH 和 Node Agent 执行结构化动作
-
-## 已实现内容
-
-- FastAPI 后端控制平面
-- Claude Agent SDK 接入位和 in-process MCP tools
-- Goal-driven 任务编排器
-- Claude 驱动的结构化意图规划、连续诊断和结果总结
-- 主机接入、主机画像、服务发现
-- Fleet / Host / Task / Approval / Audit Web 控制台
-- Node Agent 示例服务
-- OPA 策略文件
-- Beszel / Prometheus / Portainer 集成入口
-- Cockpit / Node Exporter / Beszel Agent 安装脚本模板
-
-## 采用的开源组件
-
-- `anthropics/claude-agent-sdk-python`
-- `FastAPI`
-- `SQLModel`
-- `asyncssh`
-- `Ant Design`
-- `TanStack Query`
-- `Recharts`
-- `Open Policy Agent`
-- `Vite`
-- `Beszel`
-- `Prometheus`
-- `Portainer CE`
-- `Cockpit`
-- `node_exporter`
+- Claude Agent SDK 中央编排
+- Goal-driven 任务状态机
+- SSH / Node Agent 双通道执行
+- 内建监控内核：资源快照、历史曲线、高占用进程
+- 内建服务资产模型：systemd / Docker / Podman / PM2
+- 内建策略核心：风险识别、审批挂起、危险动作阻断
+- Web 控制台：Dashboard / Hosts / Tasks / Approvals / Audit / Settings
+- 浏览器语音输入与结果播报
 
 ## 目录结构
 
@@ -46,8 +20,8 @@ XFusion-Agent/
 ├── backend/          # 控制平面后端
 ├── frontend/         # Web 控制台
 ├── agent/            # Node Agent 示例实现
-├── docs/             # PRD 与文档
-├── infra/            # OPA、Prometheus、安装脚本
+├── docs/             # PRD、验收矩阵、Agent 配置
+├── infra/            # 策略与安装脚本
 └── docker-compose.yml
 ```
 
@@ -64,7 +38,6 @@ python -m pip install \
   claude-agent-sdk fastapi "uvicorn[standard]" sqlmodel aiosqlite \
   asyncssh psutil "python-jose[cryptography]" "passlib[bcrypt]" \
   pydantic-settings httpx orjson
-cp backend/.env.example backend/.env
 PYTHONPATH=backend uvicorn app.main:app --reload --port 8000
 ```
 
@@ -91,14 +64,11 @@ cd /Users/mychanging/Desktop/XFusion-Agent
 docker compose up --build
 ```
 
-这会把以下服务一并拉起：
+这会拉起：
 
-- `backend` 控制平面
-- `frontend` Web 控制台
-- `opa` 策略引擎
-- `beszel` 监控中心
-- `prometheus` 指标中心
-- `portainer` 容器管理平台
+- `backend`
+- `frontend`
+- `node-agent`
 
 ## 默认账号
 
@@ -114,20 +84,6 @@ docker compose up --build
 - `/audit` 审计日志
 - `/settings` 系统设置
 
-## 开源底座入口
-
-- Beszel: `http://localhost:8090`
-- Prometheus: `http://localhost:9090`
-- Portainer CE: `http://localhost:9000`
-- Cockpit: 按主机安装后访问 `https://<host>:9090`
-- Node Exporter: 按主机安装后访问 `http://<host>:9100/metrics`
-
-安装脚本：
-
-- [infra/scripts/install-cockpit.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-cockpit.sh)
-- [infra/scripts/install-node-exporter.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-node-exporter.sh)
-- [infra/scripts/install-beszel-agent.sh](/Users/mychanging/Desktop/XFusion-Agent/infra/scripts/install-beszel-agent.sh)
-
 ## API 概览
 
 - `POST /api/auth/login`
@@ -135,14 +91,18 @@ docker compose up --build
 - `GET /api/hosts`
 - `POST /api/hosts`
 - `POST /api/hosts/{id}/profile`
+- `POST /api/hosts/{id}/metrics`
 - `POST /api/hosts/{id}/discover`
 - `POST /api/tasks/execute`
+- `GET /api/tasks/{id}`
 - `GET /api/approvals`
 - `POST /api/approvals/{id}`
 - `GET /api/audit`
+- `GET /api/integrations`
+- `POST /api/monitoring/collect`
+- `GET /api/monitoring/hosts/{id}/summary`
+- `GET /api/monitoring/hosts/{id}/timeseries`
 - `GET /api/validation/pdf`
-- `POST /api/agents/register`
-- `POST /api/agents/heartbeat`
 
 ## 验证命令
 
@@ -160,23 +120,13 @@ cd /Users/mychanging/Desktop/XFusion-Agent/frontend
 npx playwright test --config=playwright.config.ts
 ```
 
-相关文档：
+## 文档
 
+- [docs/PRD.md](/Users/mychanging/Desktop/XFusion-Agent/docs/PRD.md)
 - [docs/PDF_ACCEPTANCE_MATRIX.md](/Users/mychanging/Desktop/XFusion-Agent/docs/PDF_ACCEPTANCE_MATRIX.md)
 - [docs/AGENT_CONFIGURATION.md](/Users/mychanging/Desktop/XFusion-Agent/docs/AGENT_CONFIGURATION.md)
 - [docs/OPEN_SOURCE_ATTRIBUTION.md](/Users/mychanging/Desktop/XFusion-Agent/docs/OPEN_SOURCE_ATTRIBUTION.md)
 
-## 当前实现说明
+## 说明
 
-这个版本已经是完整项目骨架和主要业务流的可运行实现，不是“精简 Demo”。但仍有两个现实前提：
-
-- `Claude Agent SDK` 的完整能力需要你在运行环境中配置 Anthropic 凭据
-- 真正接管远程 Linux 主机时，需要你提供可用的 SSH 凭据或部署 Node Agent
-
-## 验证结果
-
-已完成的本地验证：
-
-- 后端导入和数据库初始化通过
-- 前端 `npm run build` 通过
-- 登录、主机创建、任务执行、审批挂起和审计链路通过冒烟验证
+当前版本对外已经收敛为一体化服务；借鉴过的开源项目只体现在内部设计和模块实现思路里，不再作为产品主界面上的独立服务出现。

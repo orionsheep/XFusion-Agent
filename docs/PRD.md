@@ -700,7 +700,7 @@ V1.0 必须整体交付以下模块，不做对外裁剪：
 
 ### 11.9.4 策略输入模型
 
-OPA 或其他策略引擎至少基于以下字段判定：
+内建策略核心至少基于以下字段判定：
 
 - actor_id
 - actor_role
@@ -828,12 +828,12 @@ Node Agent 不是分布式推理 Agent，而是轻量执行器 / 采集器。
 - `PostgreSQL`：用户、主机、服务、任务、审计、审批
 - `Redis`：任务队列、缓存、短期会话
 - `时序库`
-  - P0 可先复用 Beszel 或简化存储
-  - P1 可接 Prometheus / VictoriaMetrics
+  - V1 使用内建监控采样表
+  - 后续可按规模替换为独立时序引擎
 
 ## 13.3 安全组件
 
-- `OPA`：策略决策
+- `Policy Core`：策略决策
 - 密钥加密存储
 - SSH 凭据最小化暴露
 - 操作日志留痕
@@ -844,9 +844,9 @@ Node Agent 不是分布式推理 Agent，而是轻量执行器 / 采集器。
 
 - `anthropics/claude-agent-sdk-python`
 - `AiondaDotCom/mcp-ssh`
-- `open-policy-agent/opa`
-- `henrygd/beszel`
-- `cockpit-project/cockpit`
+- `open-policy-agent/opa` 的策略建模思路
+- `Prometheus` / `Beszel` 的指标采集与历史趋势建模思路
+- `Cockpit` / `Portainer` 的主机与服务管理交互思路
 
 ## 14. 非功能需求
 
@@ -952,7 +952,7 @@ Node Agent 不是分布式推理 Agent，而是轻量执行器 / 采集器。
 ### 16.2 Hackathon 指标映射
 
 - 基础需求执行：基础管理工具完成度
-- 高风险识别与处置：OPA + 审批
+- 高风险识别与处置：内建策略核心 + 审批
 - 复杂连续任务：任务中心 + 连续诊断流程
 - 环境感知：Host Profile
 - 反馈与说明：执行详情 + 审计 + 风险解释
@@ -1023,8 +1023,8 @@ Node Agent 不是分布式推理 Agent，而是轻量执行器 / 采集器。
 
 - Anthropic API / Claude Agent SDK
 - SSH 基础设施
-- 策略引擎 OPA
-- 指标采集与存储
+- 内建策略核心
+- 内建指标采集与存储
 
 ## 20. 当前建议结论
 
@@ -1033,8 +1033,8 @@ Node Agent 不是分布式推理 Agent，而是轻量执行器 / 采集器。
 - `产品形态`：Web 控制平面
 - `Agent 方案`：中央使用 Claude Agent SDK
 - `连接方案`：P0 SSH-first，P1 Node Agent 增强
-- `风控方案`：OPA + 审批中心
-- `监控方案`：复用 Beszel 思路或组件快速落地 Dashboard
+- `风控方案`：内建策略核心 + 审批中心
+- `监控方案`：吸收成熟开源监控模型后内建到统一服务中
 - `演示策略`：突出多主机、连续任务、高风险拦截、可解释性
 
 ## 21. 附录：建议优先级清单

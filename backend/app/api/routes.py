@@ -25,8 +25,8 @@ from ..services.platform import (
     serialize_model,
     upsert_audit,
 )
-from ..services.integrations import IntegrationCatalog
-from ..services.monitoring import PrometheusService
+from ..services.integrations import CapabilityCatalog
+from ..services.monitoring import MonitoringCoreService
 from ..services.orchestrator import GoalDrivenOrchestrator, build_validation_matrix
 from ..services.security import (
     authenticate_user,
@@ -41,9 +41,7 @@ router = APIRouter()
 
 
 def serialize_host(host: Host) -> dict:
-    payload = serialize_model(host)
-    payload["external_links"] = IntegrationCatalog.host_links(host)
-    return payload
+    return serialize_model(host)
 
 
 @router.get("/health")
@@ -94,11 +92,6 @@ def create_host(
 ) -> dict:
     host = HostRepository.create_host(session, payload.model_dump())
     host_payload = serialize_host(host)
-    try:
-        sync_result = PrometheusService.sync_targets(session)
-        host_payload["prometheus_sync"] = sync_result.get("reload", {})
-    except Exception as exc:
-        host_payload["prometheus_sync"] = {"reloaded": False, "error": str(exc)}
     upsert_audit(session, actor_id=current_user.id, host_id=host.id, event_type="host_created", payload=host_payload)
     return host_payload
 
@@ -152,6 +145,7 @@ async def metrics_host(
     host.last_seen_at = now()
     session.add(host)
     session.commit()
+    MonitoringCoreService.record_sample(session, host=host, metrics=metrics, source="manual-refresh")
     return {"metrics": metrics}
 
 
@@ -256,17 +250,32 @@ def get_pdf_validation(
 
 @router.get("/integrations")
 async def list_integrations(
+    session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    return await IntegrationCatalog.summary()
+    return CapabilityCatalog.summary(session)
 
 
-@router.post("/integrations/prometheus/sync")
-def sync_prometheus_targets(
+@router.post("/monitoring/collect")
+async def collect_monitoring_snapshots(
     session: Annotated[Session, Depends(get_session)],
     current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
 ) -> dict:
-    return PrometheusService.sync_targets(session)
+    hosts = HostRepository.list_hosts(session)
+    collected: list[dict] = []
+    for host in hosts:
+        credential = HostRepository.get_credential(session, host.id)
+        try:
+            metrics = await HostInspector.metrics(host, credential)
+            host.metrics_json = metrics
+            host.last_seen_at = now()
+            session.add(host)
+            session.commit()
+            sample = MonitoringCoreService.record_sample(session, host=host, metrics=metrics, source="full-collection")
+            collected.append({"host_id": host.id, "host_name": host.name, "sampled_at": sample.sampled_at.isoformat()})
+        except Exception as exc:
+            collected.append({"host_id": host.id, "host_name": host.name, "error": str(exc)})
+    return {"collected": collected}
 
 
 @router.get("/monitoring/hosts/{host_id}/summary")
@@ -276,7 +285,7 @@ def host_monitoring_summary(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     host = HostRepository.get_host(session, host_id)
-    return PrometheusService.host_summary(host)
+    return MonitoringCoreService.host_summary(session, host)
 
 
 @router.get("/monitoring/hosts/{host_id}/timeseries")
@@ -287,7 +296,7 @@ def host_monitoring_timeseries(
     hours: int = 6,
 ) -> dict:
     host = HostRepository.get_host(session, host_id)
-    return PrometheusService.host_timeseries(host, hours=hours)
+    return MonitoringCoreService.host_timeseries(session, host, hours=hours)
 
 
 @router.post("/agents/register")
@@ -331,6 +340,7 @@ def agent_heartbeat(
             host.package_manager = payload.profile.get("package_manager", host.package_manager)
         if payload.metrics:
             host.metrics_json = payload.metrics
+            MonitoringCoreService.record_sample(session, host=host, metrics=payload.metrics, source="agent-heartbeat")
         session.add(host)
         if payload.services:
             ServiceSync.sync(session, host, payload.services)

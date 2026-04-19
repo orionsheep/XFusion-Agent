@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Descriptions, List, Skeleton, Space, Tag, Typography, message } from 'antd'
-import { API_BASE_URL, fetchIntegrations, fetchPdfValidation, syncPrometheusTargets } from '../services/api'
+import { API_BASE_URL, collectMonitoringSnapshots, fetchIntegrations, fetchPdfValidation } from '../services/api'
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -14,10 +14,11 @@ export function SettingsPage() {
     queryFn: fetchPdfValidation,
   })
   const syncMutation = useMutation({
-    mutationFn: syncPrometheusTargets,
+    mutationFn: collectMonitoringSnapshots,
     onSuccess: () => {
-      messageApi.success('Prometheus 抓取目标已同步并触发重载')
+      messageApi.success('已采集全量主机监控快照')
       queryClient.invalidateQueries({ queryKey: ['integrations'] })
+      queryClient.invalidateQueries({ queryKey: ['hosts'] })
     },
   })
 
@@ -30,7 +31,7 @@ export function SettingsPage() {
       {contextHolder}
       <div>
         <h1 className="page-title">系统设置</h1>
-        <p className="page-subtitle">当前运行配置，以及 Beszel / Cockpit / Portainer / Prometheus 的统一接入信息。</p>
+        <p className="page-subtitle">当前运行配置，以及内建监控、策略、服务发现和任务编排模块的状态。</p>
       </div>
 
       <Card title="运行配置">
@@ -38,11 +39,11 @@ export function SettingsPage() {
           <Descriptions.Item label="前端 API 地址">{API_BASE_URL}</Descriptions.Item>
           <Descriptions.Item label="中央编排">Claude Agent SDK + Goal-driven Orchestrator</Descriptions.Item>
           <Descriptions.Item label="执行通道">SSH / Node Agent / Hybrid</Descriptions.Item>
-          <Descriptions.Item label="风控">本地策略引擎 + OPA 策略文件</Descriptions.Item>
+          <Descriptions.Item label="风控">内建策略引擎 + 审批门禁</Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card title="开源底座接入状态">
+      <Card title="内建模块状态">
         <List
           dataSource={data?.providers ?? []}
           renderItem={(item: any) => (
@@ -52,17 +53,17 @@ export function SettingsPage() {
                 description={
                   <Typography.Paragraph style={{ marginBottom: 0 }}>
                     {item.description}
-                    {item.url ? (
-                      <>
-                        <br />
-                        <Typography.Text code>{item.url}</Typography.Text>
-                      </>
-                    ) : null}
+                    <br />
+                    <Typography.Text type="secondary">
+                      {Object.entries(item.stats ?? {})
+                        .map(([key, value]) => `${key}: ${value}`)
+                        .join(' · ') || 'first-party module'}
+                    </Typography.Text>
                   </Typography.Paragraph>
                 }
               />
-              <Tag color={item.status?.reachable ? 'green' : item.status?.configured ? 'gold' : 'default'}>
-                {item.status?.reachable ? 'reachable' : item.status?.configured ? 'configured' : 'unconfigured'}
+              <Tag color={item.status?.reachable ? 'green' : 'default'}>
+                {item.status?.reachable ? 'active' : 'inactive'}
               </Tag>
             </List.Item>
           )}
@@ -70,22 +71,22 @@ export function SettingsPage() {
       </Card>
 
       <Card
-        title="部署模板"
+        title="内建动作"
         extra={
           <Space>
             <Button loading={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
-              同步 Prometheus 抓取目标
+              采集全部主机快照
             </Button>
           </Space>
         }
       >
         <List
-          dataSource={data?.deployment_templates ?? []}
+          dataSource={data?.actions ?? []}
           renderItem={(item: any) => (
             <List.Item>
               <List.Item.Meta
                 title={item.title}
-                description={<Typography.Text code>{item.command}</Typography.Text>}
+                description={item.description}
               />
             </List.Item>
           )}
@@ -98,10 +99,11 @@ export function SettingsPage() {
             '用户登录与基础角色控制',
             '主机纳管与环境画像',
             '服务自动发现与统一展示',
+            '内建监控内核与历史曲线',
+            '内建风险策略与审批门禁',
             'Goal-driven 任务中心',
             '审批中心与审计日志',
-            'Beszel / Prometheus / Portainer 统一集成入口',
-            'Cockpit / Node Exporter / Beszel Agent 安装脚本模板',
+            '浏览器语音输入与结论播报',
           ]}
           renderItem={(item) => <List.Item>{item}</List.Item>}
         />
@@ -121,8 +123,8 @@ export function SettingsPage() {
 
       <Card title="注意事项">
         <Typography.Paragraph>
-          Claude Agent SDK 仍然是中央控制平面的编排层。基础监控与管理能力已经开始切换为开源底座模式，
-          当前项目负责统一入口、审批、审计和 AI 任务编排，而不再重复造监控和管理轮子。
+          Claude Agent SDK 仍然是中央控制平面的编排层。基础监控、策略控制和服务发现已经收回到项目自身的内建模块中，
+          当前产品对外不再依赖独立的第三方控制台作为主能力入口。
         </Typography.Paragraph>
       </Card>
     </div>

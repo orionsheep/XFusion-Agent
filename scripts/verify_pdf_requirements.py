@@ -15,7 +15,7 @@ class ApiClient:
     password: str
 
     def __post_init__(self) -> None:
-        self.client = httpx.Client(timeout=180)
+        self.client = httpx.Client(timeout=180, trust_env=False)
         response = self.client.post(
             f"{self.base_url}/auth/login",
             json={"username": self.username, "password": self.password},
@@ -40,11 +40,20 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
     hosts = api.get("/hosts")
     if not hosts:
         raise RuntimeError("No managed hosts available for verification")
-    host_id = hosts[0]["id"]
+    candidate_hosts = [
+        host
+        for host in hosts
+        if ((host.get("profile_json") or {}).get("raw") or {}).get("success") is True
+    ] or hosts
+    host_id = candidate_hosts[0]["id"]
 
     report: dict[str, object] = {
         "host_id": host_id,
-        "host_name": hosts[0]["name"],
+        "host_name": candidate_hosts[0]["name"],
+        "candidate_hosts": [
+            {"id": host["id"], "name": host["name"], "address": host["address"]}
+            for host in candidate_hosts[:3]
+        ],
         "checks": [],
     }
 
@@ -55,6 +64,43 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
                 "passed": passed,
                 "evidence": evidence,
             }
+        )
+
+    def first_stdout(task_payload: dict) -> str:
+        result = task_payload.get("result_json") or {}
+        if isinstance(result.get("action_result"), dict):
+            return result["action_result"].get("stdout", "")
+        per_host = result.get("per_host") or []
+        if per_host:
+            return ((per_host[0].get("action_result") or {}).get("stdout") or "")
+        return ""
+
+    if len(candidate_hosts) >= 2:
+        multi_host_ids = [candidate_hosts[0]["id"], candidate_hosts[1]["id"]]
+        multi_host_task = api.post(
+            "/tasks/execute",
+            {"prompt": "查询当前磁盘剩余空间", "selected_host_ids": multi_host_ids, "session_id": "pdf-verify-multi", "auto_approve": False},
+        )
+        per_host = (multi_host_task.get("result_json") or {}).get("per_host") or []
+        add_check(
+            "多主机统一执行",
+            multi_host_task["status"] == "succeeded"
+            and multi_host_task.get("plan_json", {}).get("policy", {}).get("blast_radius", {}).get("hosts") == 2
+            and len(per_host) == 2
+            and all(item.get("success") for item in per_host),
+            {
+                "task_id": multi_host_task["id"],
+                "target_hosts": multi_host_task.get("target_hosts"),
+                "blast_radius": multi_host_task.get("plan_json", {}).get("policy", {}).get("blast_radius"),
+                "per_host": [
+                    {
+                        "host_id": item.get("host_id"),
+                        "host_name": item.get("host_name"),
+                        "success": item.get("success"),
+                    }
+                    for item in per_host
+                ],
+            },
         )
 
     disk_task = api.post(
@@ -74,7 +120,7 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
     add_check(
         "文件检索",
         search_task["status"] == "succeeded" and search_task["plan_json"]["action_type"] == "search_files",
-        {"task_id": search_task["id"], "stdout_excerpt": search_task["result_json"]["action_result"]["stdout"][:400]},
+        {"task_id": search_task["id"], "stdout_excerpt": first_stdout(search_task)[:400]},
     )
 
     port_task = api.post(
@@ -84,7 +130,7 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
     add_check(
         "端口查询",
         port_task["status"] == "succeeded" and port_task["plan_json"]["action_type"] == "check_port",
-        {"task_id": port_task["id"], "stdout_excerpt": port_task["result_json"]["action_result"]["stdout"][:400]},
+        {"task_id": port_task["id"], "stdout_excerpt": first_stdout(port_task)[:400]},
     )
 
     process_task = api.post(
@@ -94,7 +140,7 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
     add_check(
         "进程查询",
         process_task["status"] == "succeeded" and process_task["plan_json"]["action_type"] == "query_process",
-        {"task_id": process_task["id"], "stdout_excerpt": process_task["result_json"]["action_result"]["stdout"][:400]},
+        {"task_id": process_task["id"], "stdout_excerpt": first_stdout(process_task)[:400]},
     )
 
     blocked_task = api.post(
@@ -146,6 +192,23 @@ def run_verification(base_url: str, username: str, password: str) -> dict:
         "连续任务编排",
         diagnose_task["status"] in {"succeeded", "waiting_approval"} and "observe" in step_types and "analyze" in step_types,
         {"task_id": diagnose_task["id"], "status": diagnose_task["status"], "steps": step_types},
+    )
+
+    follow_up_task = api.post(
+        "/tasks/execute",
+        {"prompt": "继续看一下日志", "selected_host_ids": [host_id], "session_id": "pdf-verify", "auto_approve": False},
+    )
+    follow_up_detail = api.get(f"/tasks/{follow_up_task['id']}")
+    follow_up_plan = follow_up_detail.get("plan_json", {})
+    add_check(
+        "多轮上下文",
+        bool(follow_up_plan.get("ai", {}).get("fallback_context_used")),
+        {
+            "task_id": follow_up_task["id"],
+            "status": follow_up_task["status"],
+            "action_type": follow_up_plan.get("action_type"),
+            "ai": follow_up_plan.get("ai"),
+        },
     )
 
     validation = api.get("/validation/pdf")

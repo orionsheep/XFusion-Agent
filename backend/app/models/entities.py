@@ -141,3 +141,15 @@ class AuditLog(SQLModel, table=True):
     event_type: str
     payload_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class HostMetricSample(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    host_id: int = Field(index=True)
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    root_disk_percent: float | None = None
+    load1: float | None = None
+    top_processes: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
+    source: str = "control-plane"
+    sampled_at: datetime = Field(default_factory=utcnow, index=True)
