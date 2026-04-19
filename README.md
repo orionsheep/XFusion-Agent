@@ -1,6 +1,6 @@
-# XFusion Agent
+# XFusion-Agent
 
-XFusion Agent 是一个基于 `goal-driven` 理念构建的 AI 运维控制平面，面向多台 Linux 服务器的纳管、观测、执行、审批和审计。
+操作系统智能代理，基于 `goal-driven` 理念构建的 AI 运维控制平面，面向多台 Linux 服务器的纳管、观测、执行、审批和审计。
 
 项目核心目标不是“给服务器加一个聊天框”，而是把以下几件事统一起来：
 
