@@ -114,3 +114,18 @@ export async function fetchIntegrations() {
   const { data } = await api.get('/integrations')
   return data
 }
+
+export async function syncPrometheusTargets() {
+  const { data } = await api.post('/integrations/prometheus/sync')
+  return data
+}
+
+export async function fetchHostMonitoringSummary(hostId: number) {
+  const { data } = await api.get(`/monitoring/hosts/${hostId}/summary`)
+  return data
+}
+
+export async function fetchHostMonitoringTimeseries(hostId: number, hours = 6) {
+  const { data } = await api.get(`/monitoring/hosts/${hostId}/timeseries`, { params: { hours } })
+  return data
+}

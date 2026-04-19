@@ -1,11 +1,20 @@
-import { useQuery } from '@tanstack/react-query'
-import { Card, Descriptions, List, Skeleton, Tag, Typography } from 'antd'
-import { API_BASE_URL, fetchIntegrations } from '../services/api'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Button, Card, Descriptions, List, Skeleton, Space, Tag, Typography, message } from 'antd'
+import { API_BASE_URL, fetchIntegrations, syncPrometheusTargets } from '../services/api'
 
 export function SettingsPage() {
+  const queryClient = useQueryClient()
+  const [messageApi, contextHolder] = message.useMessage()
   const { data, isLoading } = useQuery({
     queryKey: ['integrations'],
     queryFn: fetchIntegrations,
+  })
+  const syncMutation = useMutation({
+    mutationFn: syncPrometheusTargets,
+    onSuccess: () => {
+      messageApi.success('Prometheus 抓取目标已同步并触发重载')
+      queryClient.invalidateQueries({ queryKey: ['integrations'] })
+    },
   })
 
   if (isLoading) {
@@ -14,6 +23,7 @@ export function SettingsPage() {
 
   return (
     <div className="content-stack">
+      {contextHolder}
       <div>
         <h1 className="page-title">系统设置</h1>
         <p className="page-subtitle">当前运行配置，以及 Beszel / Cockpit / Portainer / Prometheus 的统一接入信息。</p>
@@ -55,7 +65,16 @@ export function SettingsPage() {
         />
       </Card>
 
-      <Card title="部署模板">
+      <Card
+        title="部署模板"
+        extra={
+          <Space>
+            <Button loading={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
+              同步 Prometheus 抓取目标
+            </Button>
+          </Space>
+        }
+      >
         <List
           dataSource={data?.deployment_templates ?? []}
           renderItem={(item: any) => (

@@ -27,6 +27,7 @@ from ..services.platform import (
     upsert_audit,
 )
 from ..services.integrations import IntegrationCatalog
+from ..services.monitoring import PrometheusService
 from ..services.security import (
     authenticate_user,
     create_access_token,
@@ -93,6 +94,11 @@ def create_host(
 ) -> dict:
     host = HostRepository.create_host(session, payload.model_dump())
     host_payload = serialize_host(host)
+    try:
+        sync_result = PrometheusService.sync_targets(session)
+        host_payload["prometheus_sync"] = sync_result.get("reload", {})
+    except Exception as exc:
+        host_payload["prometheus_sync"] = {"reloaded": False, "error": str(exc)}
     upsert_audit(session, actor_id=current_user.id, host_id=host.id, event_type="host_created", payload=host_payload)
     return host_payload
 
@@ -241,6 +247,35 @@ async def list_integrations(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     return await IntegrationCatalog.summary()
+
+
+@router.post("/integrations/prometheus/sync")
+def sync_prometheus_targets(
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
+) -> dict:
+    return PrometheusService.sync_targets(session)
+
+
+@router.get("/monitoring/hosts/{host_id}/summary")
+def host_monitoring_summary(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    return PrometheusService.host_summary(host)
+
+
+@router.get("/monitoring/hosts/{host_id}/timeseries")
+def host_monitoring_timeseries(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    hours: int = 6,
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    return PrometheusService.host_timeseries(host, hours=hours)
 
 
 @router.post("/agents/register")
