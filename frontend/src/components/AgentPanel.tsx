@@ -25,6 +25,20 @@ const quickPrompts = [
   '帮我排查 service:sshd 的状态并给出建议',
 ]
 
+function getTaskStatusColor(status: string) {
+  if (status === 'succeeded') return 'green'
+  if (status === 'waiting_approval') return 'gold'
+  if (status === 'failed') return 'red'
+  return 'blue'
+}
+
+function getTaskAlertType(status?: string): 'success' | 'info' | 'warning' | 'error' {
+  if (status === 'failed') return 'error'
+  if (status === 'waiting_approval') return 'warning'
+  if (status === 'succeeded') return 'success'
+  return 'info'
+}
+
 export function AgentPanel() {
   const location = useLocation()
   const [messageApi, contextHolder] = message.useMessage()
@@ -32,6 +46,7 @@ export function AgentPanel() {
   const [sessionId, setSessionId] = useState('console-main')
   const [selectedHosts, setSelectedHosts] = useState<number[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<number>()
+  const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
   const [listening, setListening] = useState(false)
   const queryClient = useQueryClient()
 
@@ -48,7 +63,10 @@ export function AgentPanel() {
     queryKey: ['task', selectedTaskId],
     queryFn: () => fetchTask(Number(selectedTaskId)),
     enabled: Boolean(selectedTaskId),
-    refetchInterval: 3000,
+    refetchInterval: (query) => {
+      const status = (query.state.data as any)?.status
+      return !status || ['running', 'waiting_approval'].includes(status) ? 3000 : false
+    },
   })
 
   const executeMutation = useMutation({
@@ -61,6 +79,9 @@ export function AgentPanel() {
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
       if (!prompt.trim()) return
       setPrompt('')
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '任务提交失败')
     },
   })
 
@@ -76,12 +97,31 @@ export function AgentPanel() {
 
   useEffect(() => {
     const match = location.pathname.match(/^\/hosts\/(\d+)$/)
-    if (!match) return
+    if (!match) {
+      if (routePinnedHostId !== null) {
+        setSelectedHosts((current) =>
+          current.length === 1 && current[0] === routePinnedHostId ? [] : current,
+        )
+        setRoutePinnedHostId(null)
+      }
+      return
+    }
     const hostId = Number(match[1])
     if (Number.isFinite(hostId)) {
       setSelectedHosts([hostId])
+      setRoutePinnedHostId(hostId)
     }
-  }, [location.pathname])
+  }, [location.pathname, routePinnedHostId])
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel()
+    }
+  }, [])
+
+  useEffect(() => {
+    window.speechSynthesis?.cancel()
+  }, [selectedTaskId])
 
   const startVoiceInput = () => {
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -135,6 +175,8 @@ export function AgentPanel() {
     })
   }
 
+  const canExecute = Boolean(prompt.trim() && selectedHosts.length)
+
   return (
     <div className="agent-panel">
       {contextHolder}
@@ -162,7 +204,10 @@ export function AgentPanel() {
             placeholder="选择目标主机"
             options={hostOptions}
             value={selectedHosts}
-            onChange={(values) => setSelectedHosts(values)}
+            onChange={(values) => {
+              setSelectedHosts(values)
+              setRoutePinnedHostId(null)
+            }}
             maxTagCount="responsive"
           />
           <Input
@@ -177,7 +222,7 @@ export function AgentPanel() {
         {currentTask ? (
           <Space direction="vertical" style={{ width: '100%' }} size={16}>
             <Alert
-              type={currentTask.status === 'failed' ? 'error' : currentTask.status === 'waiting_approval' ? 'warning' : 'success'}
+              type={getTaskAlertType(currentTask.status)}
               message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
               showIcon
             />
@@ -244,9 +289,7 @@ export function AgentPanel() {
                     </Typography.Text>
                   }
                 />
-                <Tag color={task.status === 'succeeded' ? 'green' : task.status === 'waiting_approval' ? 'gold' : task.status === 'failed' ? 'red' : 'blue'}>
-                  {task.status}
-                </Tag>
+                <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
               </List.Item>
             )}
           />
@@ -271,7 +314,13 @@ export function AgentPanel() {
           <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
             {listening ? '正在听写' : '语音输入'}
           </Button>
-          <Button type="primary" icon={<PlayCircleOutlined />} loading={executeMutation.isPending} onClick={runPrompt}>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            disabled={!canExecute}
+            loading={executeMutation.isPending}
+            onClick={runPrompt}
+          >
             发送给 Agent
           </Button>
         </Space>

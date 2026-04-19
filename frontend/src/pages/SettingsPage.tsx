@@ -19,6 +19,7 @@ export function SettingsPage() {
       messageApi.success('已采集全量主机监控快照')
       queryClient.invalidateQueries({ queryKey: ['integrations'] })
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
   })
 

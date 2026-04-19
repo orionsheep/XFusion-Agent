@@ -193,13 +193,30 @@ export function DashboardPage() {
         />
       </Card>
 
-      <div className="summary-grid">
-        <Card><Statistic title="在线率" value={onlineRate} suffix="%" /></Card>
-        <Card><Statistic title="风险主机" value={riskHosts.length} /></Card>
-        <Card><Statistic title="待审批" value={pendingApprovals.length} /></Card>
-        <Card><Statistic title="运行中任务" value={runningTasks.length} /></Card>
-        <Card><Statistic title="平均 CPU" value={avgCpu} suffix="%" /></Card>
-      </div>
+      <Card className="summary-ribbon-card">
+        <div className="summary-ribbon">
+          <div className="summary-ribbon__item">
+            <Typography.Text type="secondary">在线率</Typography.Text>
+            <Statistic title={null} value={onlineRate} suffix="%" />
+          </div>
+          <div className="summary-ribbon__item">
+            <Typography.Text type="secondary">风险主机</Typography.Text>
+            <Statistic title={null} value={riskHosts.length} />
+          </div>
+          <div className="summary-ribbon__item">
+            <Typography.Text type="secondary">待审批</Typography.Text>
+            <Statistic title={null} value={pendingApprovals.length} />
+          </div>
+          <div className="summary-ribbon__item">
+            <Typography.Text type="secondary">运行中任务</Typography.Text>
+            <Statistic title={null} value={runningTasks.length} />
+          </div>
+          <div className="summary-ribbon__item">
+            <Typography.Text type="secondary">平均 CPU</Typography.Text>
+            <Statistic title={null} value={avgCpu} suffix="%" />
+          </div>
+        </div>
+      </Card>
 
       {riskHosts.length || pendingApprovals.length || failedTasks.length ? (
         <Alert

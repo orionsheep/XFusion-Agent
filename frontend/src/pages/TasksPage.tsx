@@ -17,6 +17,7 @@ import {
   message,
 } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { executeTask, fetchHosts, fetchPdfValidation, fetchTask, fetchTasks } from '../services/api'
 
 const examples = [
@@ -28,7 +29,22 @@ const examples = [
   '帮我排查 service:sshd 的状态并给出建议',
 ]
 
+function getTaskStatusColor(status: string) {
+  if (status === 'succeeded') return 'green'
+  if (status === 'waiting_approval') return 'gold'
+  if (status === 'failed') return 'red'
+  return 'blue'
+}
+
+function getTaskAlertType(status?: string): 'success' | 'info' | 'warning' | 'error' {
+  if (status === 'failed') return 'error'
+  if (status === 'waiting_approval') return 'warning'
+  if (status === 'succeeded') return 'success'
+  return 'info'
+}
+
 export function TasksPage() {
+  const location = useLocation()
   const [messageApi, contextHolder] = message.useMessage()
   const [prompt, setPrompt] = useState('查询当前磁盘剩余空间')
   const [sessionId, setSessionId] = useState('default')
@@ -52,7 +68,10 @@ export function TasksPage() {
     queryKey: ['task', selectedTaskId],
     queryFn: () => fetchTask(Number(selectedTaskId)),
     enabled: Boolean(selectedTaskId),
-    refetchInterval: 3000,
+    refetchInterval: (query) => {
+      const status = (query.state.data as any)?.status
+      return !status || ['running', 'waiting_approval'].includes(status) ? 3000 : false
+    },
   })
 
   const { data: validation } = useQuery({
@@ -67,6 +86,10 @@ export function TasksPage() {
       messageApi.success(`任务已提交，当前状态：${task.status}`)
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['pdf-validation'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '任务提交失败')
     },
   })
 
@@ -81,6 +104,27 @@ export function TasksPage() {
     }
     setSelectedTaskId(tasks[0].id)
   }, [tasks, selectedTaskId])
+
+  useEffect(() => {
+    const state = location.state as { selectedHosts?: number[]; sessionId?: string } | null
+    if (!state) return
+    if (state.selectedHosts?.length) {
+      setSelectedHosts(state.selectedHosts)
+    }
+    if (state.sessionId) {
+      setSessionId(state.sessionId)
+    }
+  }, [location.state])
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel()
+    }
+  }, [])
+
+  useEffect(() => {
+    window.speechSynthesis?.cancel()
+  }, [selectedTaskId])
 
   const startVoiceInput = () => {
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -119,6 +163,8 @@ export function TasksPage() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const canExecute = Boolean(prompt.trim() && selectedHosts.length)
+
   return (
     <div className="content-stack">
       {contextHolder}
@@ -134,58 +180,80 @@ export function TasksPage() {
         message="当前任务中心已对齐 PDF 要求：自然语言驱动、风险审批、多步排障、过程留痕，以及可选语音输入。"
       />
 
-      <Row gutter={16}>
+      <Row gutter={8}>
         <Col xs={24} xl={9}>
           <Card title="发起任务">
-            <Space direction="vertical" style={{ width: '100%' }} size={16}>
-              <Checkbox.Group
-                options={hostOptions}
-                value={selectedHosts}
-                onChange={(values) => setSelectedHosts(values as number[])}
-              />
-              <Input
-                value={sessionId}
-                onChange={(event) => setSessionId(event.target.value)}
-                placeholder="会话 ID，用于多轮上下文"
-              />
-              <Input.TextArea
-                rows={7}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder="例如：帮我排查 service:sshd 为什么启动失败"
-              />
-              <Space wrap>
-                {examples.map((item) => (
-                  <Tag
-                    key={item}
-                    style={{ cursor: 'pointer', padding: '6px 10px' }}
-                    onClick={() => setPrompt(item)}
-                  >
-                    {item}
-                  </Tag>
-                ))}
-              </Space>
-              <Space>
+            <div className="task-composer">
+              <div className="task-composer__section task-composer__section--muted">
+                <Typography.Text strong>目标主机</Typography.Text>
+                <Checkbox.Group
+                  className="task-composer__host-grid"
+                  options={hostOptions}
+                  value={selectedHosts}
+                  onChange={(values) => setSelectedHosts(values as number[])}
+                />
+              </div>
+
+              <div className="task-composer__section task-composer__section--muted">
+                <Typography.Text strong>会话上下文</Typography.Text>
+                <Input
+                  value={sessionId}
+                  onChange={(event) => setSessionId(event.target.value)}
+                  placeholder="会话 ID，用于多轮上下文"
+                />
+              </div>
+
+              <div className="task-composer__section">
+                <Typography.Text strong>任务目标</Typography.Text>
+                <Input.TextArea
+                  rows={7}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="例如：帮我排查 service:sshd 为什么启动失败"
+                />
+                <Space wrap>
+                  {examples.map((item) => (
+                    <Tag
+                      key={item}
+                      style={{ cursor: 'pointer', padding: '6px 10px' }}
+                      onClick={() => setPrompt(item)}
+                    >
+                      {item}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+
+              <div className="task-composer__footer">
                 <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
                   {listening ? '正在听写' : '语音输入'}
                 </Button>
                 <Button
                   type="primary"
                   icon={<PlayCircleOutlined />}
+                  disabled={!canExecute}
                   loading={executeMutation.isPending}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!prompt.trim()) {
+                      messageApi.warning('先输入任务目标')
+                      return
+                    }
+                    if (!selectedHosts.length) {
+                      messageApi.warning('至少选择一台目标主机')
+                      return
+                    }
                     executeMutation.mutate({
                       prompt,
                       selected_host_ids: selectedHosts,
                       session_id: sessionId,
                       auto_approve: false,
                     })
-                  }
+                  }}
                 >
                   执行任务
                 </Button>
-              </Space>
-            </Space>
+              </div>
+            </div>
           </Card>
 
           <Card title="PDF 验收矩阵">
@@ -231,19 +299,7 @@ export function TasksPage() {
                       </Space>
                     }
                   />
-                  <Tag
-                    color={
-                      task.status === 'succeeded'
-                        ? 'green'
-                        : task.status === 'waiting_approval'
-                          ? 'gold'
-                          : task.status === 'failed'
-                            ? 'red'
-                            : 'blue'
-                    }
-                  >
-                    {task.status}
-                  </Tag>
+                  <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
                 </List.Item>
               )}
             />
@@ -264,7 +320,7 @@ export function TasksPage() {
             ) : (
               <Space direction="vertical" style={{ width: '100%' }} size={16}>
                 <Alert
-                  type={currentTask.status === 'failed' ? 'error' : currentTask.status === 'waiting_approval' ? 'warning' : 'success'}
+                  type={getTaskAlertType(currentTask.status)}
                   message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
                 />
                 <Card size="small" title="AI 计划">

@@ -72,6 +72,13 @@ function getPressureLabel(value: number | null, thresholds: { warn: number; dang
   return { color: 'green', text: '稳定' }
 }
 
+function getTaskStatusColor(status: string) {
+  if (status === 'succeeded') return 'green'
+  if (status === 'waiting_approval') return 'gold'
+  if (status === 'failed') return 'red'
+  return 'blue'
+}
+
 export function HostDetailPage() {
   const { hostId } = useParams()
   const navigate = useNavigate()
@@ -95,6 +102,7 @@ export function HostDetailPage() {
     queryKey: ['host-monitoring-timeseries', hostIdNumber, historyHours],
     queryFn: () => fetchHostMonitoringTimeseries(hostIdNumber, historyHours),
     enabled: Number.isFinite(hostIdNumber),
+    refetchInterval: 30000,
   })
   const { data: tasks = [] } = useQuery({
     queryKey: ['tasks'],
@@ -108,6 +116,9 @@ export function HostDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['host', hostIdNumber] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '主机画像刷新失败')
+    },
   })
   const metricsMutation = useMutation({
     mutationFn: () => fetchHostMetrics(hostIdNumber),
@@ -115,8 +126,11 @@ export function HostDetailPage() {
       messageApi.success('主机指标已刷新')
       queryClient.invalidateQueries({ queryKey: ['host', hostIdNumber] })
       queryClient.invalidateQueries({ queryKey: ['host-monitoring-summary', hostIdNumber] })
-      queryClient.invalidateQueries({ queryKey: ['host-monitoring-timeseries', hostIdNumber, historyHours] })
+      queryClient.invalidateQueries({ queryKey: ['host-monitoring-timeseries', hostIdNumber] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '主机指标刷新失败')
     },
   })
   const discoverMutation = useMutation({
@@ -125,6 +139,10 @@ export function HostDetailPage() {
       messageApi.success('服务暴露面已重新扫描')
       queryClient.invalidateQueries({ queryKey: ['host', hostIdNumber] })
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '服务扫描失败')
     },
   })
 
@@ -163,8 +181,16 @@ export function HostDetailPage() {
     return tasks.filter((task: any) => (task.target_hosts ?? []).includes(hostIdNumber)).slice(0, 6)
   }, [hostIdNumber, tasks])
 
-  if (isLoading || !data) {
+  if (!Number.isFinite(hostIdNumber)) {
+    return <Card><Empty description="无效的主机 ID" /></Card>
+  }
+
+  if (isLoading) {
     return <Card loading />
+  }
+
+  if (!data) {
+    return <Card><Empty description="主机不存在或暂时无法加载" /></Card>
   }
 
   const monitoringValues = monitoringSummary?.values ?? {}
@@ -291,16 +317,19 @@ export function HostDetailPage() {
               <Tag color={data.status === 'online' || data.status === 'registered' ? 'green' : 'red'}>{data.status}</Tag>
               <Tag color="cyan">{data.connection_mode}</Tag>
               <Tag color="blue">{data.environment}</Tag>
-          <Tag color={cpuPressure.color}>CPU {cpuPressure.text}</Tag>
-          <Tag color={memoryPressure.color}>内存 {memoryPressure.text}</Tag>
-          <Tag color={diskPressure.color}>磁盘 {diskPressure.text}</Tag>
-        </Space>
-      </div>
+              <Tag color={cpuPressure.color}>CPU {cpuPressure.text}</Tag>
+              <Tag color={memoryPressure.color}>内存 {memoryPressure.text}</Tag>
+              <Tag color={diskPressure.color}>磁盘 {diskPressure.text}</Tag>
+            </Space>
+          </div>
           <Space wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/hosts')}>
               返回主机列表
             </Button>
-            <Button icon={<ThunderboltOutlined />} onClick={() => navigate('/tasks')}>
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={() => navigate('/tasks', { state: { selectedHosts: [hostIdNumber] } })}
+            >
               去任务中心
             </Button>
             <Button icon={<ReloadOutlined />} loading={profileMutation.isPending} onClick={() => profileMutation.mutate()}>
@@ -320,23 +349,31 @@ export function HostDetailPage() {
           </Space>
         </div>
 
-        <div className="summary-grid">
-          <Card>
-            <Statistic title="CPU 使用率" value={cpuValue ?? 'N/A'} suffix={cpuValue === null ? '' : '%'} />
+        <div className="metric-ribbon">
+          <div className="metric-ribbon__item">
+            <Typography.Text type="secondary">CPU 使用率</Typography.Text>
+            <Statistic title={null} value={cpuValue ?? 'N/A'} suffix={cpuValue === null ? '' : '%'} />
             {cpuValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={cpuValue} strokeColor="#0f766e" showInfo={false} />}
-          </Card>
-          <Card>
-            <Statistic title="内存使用率" value={memoryValue ?? 'N/A'} suffix={memoryValue === null ? '' : '%'} />
+          </div>
+          <div className="metric-ribbon__item">
+            <Typography.Text type="secondary">内存使用率</Typography.Text>
+            <Statistic title={null} value={memoryValue ?? 'N/A'} suffix={memoryValue === null ? '' : '%'} />
             {memoryValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={memoryValue} strokeColor="#0891b2" showInfo={false} />}
-          </Card>
-          <Card>
-            <Statistic title="根分区使用率" value={diskValue ?? 'N/A'} suffix={diskValue === null ? '' : '%'} />
+          </div>
+          <div className="metric-ribbon__item">
+            <Typography.Text type="secondary">根分区使用率</Typography.Text>
+            <Statistic title={null} value={diskValue ?? 'N/A'} suffix={diskValue === null ? '' : '%'} />
             {diskValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={diskValue} strokeColor="#ca8a04" showInfo={false} />}
-          </Card>
-          <Card>
-            <Statistic title="Load 1m" value={Number(monitoringValues.load1 ?? 0).toFixed(2)} />
+          </div>
+          <div className="metric-ribbon__item">
+            <Typography.Text type="secondary">Load 1m</Typography.Text>
+            <Statistic
+              title={null}
+              value={monitoringValues.load1 ?? 'N/A'}
+              formatter={(value) => (typeof value === 'number' ? value.toFixed(2) : value)}
+            />
             <Typography.Text type="secondary">在线采样 {monitoringValues.up ? '正常' : '异常'}</Typography.Text>
-          </Card>
+          </div>
         </div>
       </Card>
 
@@ -401,19 +438,23 @@ export function HostDetailPage() {
             <Descriptions.Item label="最近在线时间">{formatTime(data.last_seen_at)}</Descriptions.Item>
           </Descriptions>
 
-          <div className="detail-mini-stats">
-            <Card size="small">
-              <Statistic title="服务总数" value={services.length} />
-            </Card>
-            <Card size="small">
-              <Statistic title="运行中服务" value={runningServices} />
-            </Card>
-            <Card size="small">
-              <Statistic title="异常服务" value={degradedServices} />
-            </Card>
-            <Card size="small">
-              <Statistic title="暴露端口服务" value={exposedServices} />
-            </Card>
+          <div className="inline-stats">
+            <div className="inline-stats__item">
+              <Typography.Text type="secondary">服务总数</Typography.Text>
+              <Typography.Title level={4}>{services.length}</Typography.Title>
+            </div>
+            <div className="inline-stats__item">
+              <Typography.Text type="secondary">运行中服务</Typography.Text>
+              <Typography.Title level={4}>{runningServices}</Typography.Title>
+            </div>
+            <div className="inline-stats__item">
+              <Typography.Text type="secondary">异常服务</Typography.Text>
+              <Typography.Title level={4}>{degradedServices}</Typography.Title>
+            </div>
+            <div className="inline-stats__item">
+              <Typography.Text type="secondary">暴露端口服务</Typography.Text>
+              <Typography.Title level={4}>{exposedServices}</Typography.Title>
+            </div>
           </div>
         </Card>
       </div>
@@ -455,11 +496,7 @@ export function HostDetailPage() {
             {
               title: '状态',
               dataIndex: 'status',
-              render: (value: string) => (
-                <Tag color={value === 'succeeded' ? 'green' : value === 'failed' ? 'red' : value === 'waiting_approval' ? 'gold' : 'blue'}>
-                  {value}
-                </Tag>
-              ),
+              render: (value: string) => <Tag color={getTaskStatusColor(value)}>{value}</Tag>,
             },
             {
               title: '创建时间',

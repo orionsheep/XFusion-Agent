@@ -40,7 +40,7 @@ export function AppShell() {
   })
   const [draggingNav, setDraggingNav] = useState(false)
   const { data: overview } = useQuery({
-    queryKey: ['overview-shell'],
+    queryKey: ['overview'],
     queryFn: fetchOverview,
     refetchInterval: 30000,
   })

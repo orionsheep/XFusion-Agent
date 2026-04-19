@@ -5,6 +5,7 @@ import {
   Card,
   Form,
   Input,
+  InputNumber,
   Modal,
   Select,
   Space,
@@ -13,7 +14,7 @@ import {
   Typography,
   message,
 } from 'antd'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createHost, discoverHost, fetchHosts, profileHost } from '../services/api'
 
@@ -22,7 +23,30 @@ export function HostsPage() {
   const [messageApi, contextHolder] = message.useMessage()
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  const connectionMode = Form.useWatch('connection_mode', form)
+  const authType = Form.useWatch('auth_type', form)
   const queryClient = useQueryClient()
+  const needsSsh = connectionMode !== 'agent'
+  const needsAgent = connectionMode !== 'ssh'
+
+  useEffect(() => {
+    if (!needsAgent) {
+      form.setFieldValue('agent_url', undefined)
+    }
+    if (!needsSsh) {
+      form.setFieldsValue({
+        ssh_private_key: undefined,
+        ssh_password: undefined,
+      })
+      return
+    }
+    if (authType === 'key') {
+      form.setFieldValue('ssh_password', undefined)
+    }
+    if (authType === 'password') {
+      form.setFieldValue('ssh_private_key', undefined)
+    }
+  }, [authType, form, needsAgent, needsSsh])
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['hosts'],
@@ -34,6 +58,10 @@ export function HostsPage() {
     onSuccess: () => {
       messageApi.success('主机画像已刷新')
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '主机画像刷新失败')
     },
   })
 
@@ -42,6 +70,10 @@ export function HostsPage() {
     onSuccess: () => {
       messageApi.success('服务发现已完成')
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '服务发现失败')
     },
   })
 
@@ -50,8 +82,12 @@ export function HostsPage() {
     onSuccess: () => {
       messageApi.success('主机已接入')
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
       setOpen(false)
       form.resetFields()
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '主机接入失败')
     },
   })
 
@@ -144,27 +180,49 @@ export function HostsPage() {
           <Form.Item name="environment" label="环境">
             <Select options={[{ value: 'production' }, { value: 'staging' }, { value: 'dev' }]} />
           </Form.Item>
-          <Form.Item name="connection_mode" label="连接模式">
+          <Form.Item name="connection_mode" label="连接模式" rules={[{ required: true }]}>
             <Select options={[{ value: 'ssh' }, { value: 'agent' }, { value: 'hybrid' }]} />
           </Form.Item>
-          <Form.Item name="auth_type" label="认证方式">
-            <Select options={[{ value: 'key' }, { value: 'password' }]} />
-          </Form.Item>
-          <Form.Item name="username" label="SSH 用户名">
-            <Input />
-          </Form.Item>
-          <Form.Item name="ssh_port" label="SSH 端口">
-            <Input type="number" />
-          </Form.Item>
-          <Form.Item name="ssh_private_key" label="SSH 私钥">
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="ssh_password" label="SSH 密码">
-            <Input.Password />
-          </Form.Item>
-          <Form.Item name="agent_url" label="Agent URL">
-            <Input placeholder="http://host:9001" />
-          </Form.Item>
+          {needsSsh ? (
+            <>
+              <Form.Item name="auth_type" label="认证方式" rules={[{ required: true }]}>
+                <Select options={[{ value: 'key' }, { value: 'password' }]} />
+              </Form.Item>
+              <Form.Item name="username" label="SSH 用户名" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="ssh_port" label="SSH 端口" rules={[{ required: true }]}>
+                <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+              </Form.Item>
+              {authType === 'key' ? (
+                <Form.Item
+                  name="ssh_private_key"
+                  label="SSH 私钥"
+                  rules={[{ required: true, message: 'SSH key 模式下必须提供私钥' }]}
+                >
+                  <Input.TextArea rows={4} />
+                </Form.Item>
+              ) : null}
+              {authType === 'password' ? (
+                <Form.Item
+                  name="ssh_password"
+                  label="SSH 密码"
+                  rules={[{ required: true, message: 'SSH password 模式下必须提供密码' }]}
+                >
+                  <Input.Password />
+                </Form.Item>
+              ) : null}
+            </>
+          ) : null}
+          {needsAgent ? (
+            <Form.Item
+              name="agent_url"
+              label="Agent URL"
+              rules={[{ required: true, message: 'Agent / Hybrid 模式下必须提供 Agent URL' }]}
+            >
+              <Input placeholder="http://host:9001" />
+            </Form.Item>
+          ) : null}
         </Form>
       </Modal>
     </div>
