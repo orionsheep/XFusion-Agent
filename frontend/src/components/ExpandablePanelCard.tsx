@@ -1,11 +1,17 @@
 import { ArrowsAltOutlined, FullscreenExitOutlined, FullscreenOutlined, ShrinkOutlined } from '@ant-design/icons'
 import { Button, Card, Space } from 'antd'
 import type { CardProps } from 'antd'
+import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-type ExpandablePanelCardProps = CardProps & {
+type ExpandablePanelCardProps = Omit<CardProps, 'children'> & {
   fullscreenLabel?: string
+  children?: ReactNode | ((state: {
+    panelFullscreen: boolean
+    pageFullscreen: boolean
+    anyFullscreen: boolean
+  }) => ReactNode)
 }
 
 export function ExpandablePanelCard({
@@ -67,13 +73,22 @@ export function ExpandablePanelCard({
 
   const mergedExtra = extra ? <Space size={8}>{extra}{pageFullscreenButton}{expandButton}</Space> : <Space size={8}>{pageFullscreenButton}{expandButton}</Space>
 
+  const resolvedChildren =
+    typeof children === 'function'
+      ? children({
+          panelFullscreen: fullscreen,
+          pageFullscreen,
+          anyFullscreen: fullscreen || pageFullscreen,
+        })
+      : children
+
   const cardNode = (
     <Card
       {...props}
       extra={mergedExtra}
       className={`${className ?? ''}${fullscreen || pageFullscreen ? ' expandable-panel-card--fullscreen' : ''}`.trim()}
     >
-      {children}
+      {resolvedChildren}
     </Card>
   )
 

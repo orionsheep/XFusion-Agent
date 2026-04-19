@@ -95,6 +95,7 @@ def profile() -> dict[str, Any]:
 
 def metrics() -> dict[str, Any]:
     memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
     disk = psutil.disk_usage("/")
     top_processes: list[dict[str, Any]] = []
     for process in sorted(psutil.process_iter(["pid", "username", "name", "cpu_percent", "memory_percent"]), key=lambda item: item.info.get("cpu_percent") or 0, reverse=True)[:6]:
@@ -107,14 +108,54 @@ def metrics() -> dict[str, Any]:
                 "mem_percent": round(process.info.get("memory_percent") or 0, 2),
             }
         )
+    filesystems: list[dict[str, Any]] = []
+    seen_mounts: set[str] = set()
+    for partition in psutil.disk_partitions(all=False):
+        mountpoint = partition.mountpoint
+        if mountpoint in seen_mounts:
+            continue
+        seen_mounts.add(mountpoint)
+        try:
+            usage = psutil.disk_usage(mountpoint)
+        except Exception:
+            continue
+        filesystems.append(
+            {
+                "filesystem": partition.device or partition.fstype or mountpoint,
+                "mount": mountpoint,
+                "size_bytes": usage.total,
+                "used_bytes": usage.used,
+                "available_bytes": usage.free,
+                "size_kb": int(usage.total / 1024),
+                "used_kb": int(usage.used / 1024),
+                "available_kb": int(usage.free / 1024),
+                "percent": usage.percent,
+            }
+        )
+        if len(filesystems) >= 12:
+            break
+    uptime_seconds = max(int(datetime.now(timezone.utc).timestamp() - psutil.boot_time()), 0)
     return {
         "cpu_percent": psutil.cpu_percent(interval=0.2),
         "load_average": list(os.getloadavg()),
+        "uptime_seconds": uptime_seconds,
         "memory": {
             "total": memory.total,
             "used": memory.used,
             "available": memory.available,
+            "total_bytes": memory.total,
+            "used_bytes": memory.used,
+            "available_bytes": memory.available,
             "percent": memory.percent,
+        },
+        "swap": {
+            "total": swap.total,
+            "used": swap.used,
+            "free": swap.free,
+            "total_bytes": swap.total,
+            "used_bytes": swap.used,
+            "free_bytes": swap.free,
+            "percent": swap.percent,
         },
         "disk": {
             "total": disk.total,
@@ -122,6 +163,7 @@ def metrics() -> dict[str, Any]:
             "free": disk.free,
             "percent": disk.percent,
         },
+        "filesystems": filesystems,
         "top_processes": top_processes,
         "collected_at": now(),
     }

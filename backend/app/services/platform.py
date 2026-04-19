@@ -324,6 +324,19 @@ class HostInspector:
             except Exception:
                 pass
 
+        def _humanize_uptime(seconds: int) -> str:
+            seconds = max(int(seconds or 0), 0)
+            days, remainder = divmod(seconds, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, _ = divmod(remainder, 60)
+            parts: list[str] = []
+            if days:
+                parts.append(f"{days}d")
+            if hours or days:
+                parts.append(f"{hours}h")
+            parts.append(f"{minutes}m")
+            return " ".join(parts)
+
         command = r"""bash -lc '
             set -e
             read cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
@@ -342,31 +355,49 @@ class HostInspector:
             fi
             mem_total_kb=$(awk "/MemTotal/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
             mem_available_kb=$(awk "/MemAvailable/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
+            swap_total_kb=$(awk "/SwapTotal/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
+            swap_free_kb=$(awk "/SwapFree/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
             if [ "$mem_total_kb" -gt 0 ]; then
               memory_percent=$(awk -v total="$mem_total_kb" -v available="$mem_available_kb" "BEGIN { printf \"%.2f\", (1 - available / total) * 100 }")
             else
               memory_percent="0.00"
             fi
+            if [ "$swap_total_kb" -gt 0 ]; then
+              swap_percent=$(awk -v total="$swap_total_kb" -v free="$swap_free_kb" "BEGIN { printf \"%.2f\", (1 - free / total) * 100 }")
+            else
+              swap_percent="0.00"
+            fi
             disk_root=$(df -P / | awk "NR==2 {print \$5}")
             load=$(uptime | sed "s/.*load averages*: //; s/.*load average: //")
+            uptime_seconds=$(awk "{print int(\$1)}" /proc/uptime 2>/dev/null || echo 0)
             printf "cpu_percent=%s\n" "$cpu_percent"
             printf "load=%s\n" "$load"
+            printf "uptime_seconds=%s\n" "$uptime_seconds"
             printf "mem_total_kb=%s\n" "$mem_total_kb"
             printf "mem_available_kb=%s\n" "$mem_available_kb"
             printf "memory_percent=%s\n" "$memory_percent"
+            printf "swap_total_kb=%s\n" "$swap_total_kb"
+            printf "swap_free_kb=%s\n" "$swap_free_kb"
+            printf "swap_percent=%s\n" "$swap_percent"
             printf "disk_root=%s\n" "$disk_root"
             echo "__TOP__"
             ps -eo pid=,user=,comm=,%cpu=,%mem= --sort=-%cpu | head -n 7
+            echo "__FS__"
+            df -Pk | tail -n +2 | head -n 12
         '"""
         result = await SSHConnector.run(host, credential, command, timeout_seconds=8)
         metrics: dict[str, Any] = {"raw": result}
         top_processes: list[dict[str, Any]] = []
-        top_section = False
+        filesystems: list[dict[str, Any]] = []
+        section = "meta"
         for line in result["stdout"].splitlines():
             if line.strip() == "__TOP__":
-                top_section = True
+                section = "top"
                 continue
-            if top_section:
+            if line.strip() == "__FS__":
+                section = "filesystem"
+                continue
+            if section == "top":
                 if not line.strip() or line.strip().startswith("PID"):
                     continue
                 parts = line.split()
@@ -381,24 +412,68 @@ class HostInspector:
                         }
                     )
                 continue
+            if section == "filesystem":
+                parts = line.split()
+                if len(parts) >= 6:
+                    size_kb = int(parts[1] or 0)
+                    used_kb = int(parts[2] or 0)
+                    available_kb = int(parts[3] or 0)
+                    filesystems.append(
+                        {
+                            "filesystem": parts[0],
+                            "mount": " ".join(parts[5:]),
+                            "size_kb": size_kb,
+                            "used_kb": used_kb,
+                            "available_kb": available_kb,
+                            "size_bytes": size_kb * 1024,
+                            "used_bytes": used_kb * 1024,
+                            "available_bytes": available_kb * 1024,
+                            "percent": float(str(parts[4]).rstrip("%") or 0),
+                        }
+                    )
+                continue
             if "=" in line:
                 key, value = line.strip().split("=", 1)
                 metrics[key] = value
         memory_percent = float(metrics.get("memory_percent") or 0)
         memory_total_kb = int(metrics.get("mem_total_kb") or 0)
         memory_available_kb = int(metrics.get("mem_available_kb") or 0)
+        swap_total_kb = int(metrics.get("swap_total_kb") or 0)
+        swap_free_kb = int(metrics.get("swap_free_kb") or 0)
+        uptime_seconds = int(metrics.get("uptime_seconds") or 0)
         disk_percent = str(metrics.get("disk_root") or "0").strip().rstrip("%")
         cpu_percent = float(metrics.get("cpu_percent") or 0)
+        load_parts = [part.strip() for part in str(metrics.get("load") or "").split(",") if part.strip()]
         metrics["cpu_percent"] = cpu_percent
+        metrics["uptime_seconds"] = uptime_seconds
+        metrics["uptime_human"] = _humanize_uptime(uptime_seconds)
+        metrics["load_average"] = [
+            round(float(part), 2)
+            for part in load_parts[:3]
+            if part.replace(".", "", 1).isdigit()
+        ]
         metrics["memory"] = {
             "total_kb": memory_total_kb,
             "available_kb": memory_available_kb,
             "used_kb": max(memory_total_kb - memory_available_kb, 0),
+            "total_bytes": memory_total_kb * 1024,
+            "available_bytes": memory_available_kb * 1024,
+            "used_bytes": max(memory_total_kb - memory_available_kb, 0) * 1024,
             "percent": memory_percent,
+        }
+        metrics["swap"] = {
+            "total_kb": swap_total_kb,
+            "free_kb": swap_free_kb,
+            "used_kb": max(swap_total_kb - swap_free_kb, 0),
+            "total_bytes": swap_total_kb * 1024,
+            "free_bytes": swap_free_kb * 1024,
+            "used_bytes": max(swap_total_kb - swap_free_kb, 0) * 1024,
+            "percent": float(metrics.get("swap_percent") or 0),
         }
         metrics["disk"] = {
             "percent": float(disk_percent or 0),
         }
+        metrics["filesystems"] = filesystems
         metrics["top_processes"] = top_processes
         return metrics
 
