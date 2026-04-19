@@ -159,16 +159,29 @@ class SSHConnector:
         return await asyncssh.connect(**kwargs)
 
     @classmethod
-    async def run(cls, host: Host, credential: HostCredential | None, command: str) -> dict[str, Any]:
+    async def run(
+        cls,
+        host: Host,
+        credential: HostCredential | None,
+        command: str,
+        timeout_seconds: int = 10,
+    ) -> dict[str, Any]:
         try:
             async with await cls._connect(host, credential) as conn:
-                result = await conn.run(command, check=False)
+                result = await asyncio.wait_for(conn.run(command, check=False), timeout=timeout_seconds)
                 return {
                     "success": result.exit_status == 0,
                     "exit_code": result.exit_status,
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                 }
+        except TimeoutError:
+            return {
+                "success": False,
+                "exit_code": 124,
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout_seconds}s",
+            }
         except Exception as exc:
             return {"success": False, "exit_code": 255, "stdout": "", "stderr": str(exc)}
 
@@ -214,19 +227,34 @@ class HostInspector:
             except Exception:
                 pass
 
-        command = r"""
-            set -e
-            . /etc/os-release >/dev/null 2>&1 || true
-            printf "os_name=%s\n" "${ID:-unknown}"
-            printf "os_version=%s\n" "${VERSION_ID:-unknown}"
-            printf "kernel=%s\n" "$(uname -r)"
-            printf "package_manager=%s\n" "$(command -v dnf >/dev/null && echo dnf || command -v apt >/dev/null && echo apt || command -v yum >/dev/null && echo yum || echo unknown)"
-            printf "systemd=%s\n" "$(command -v systemctl >/dev/null && echo true || echo false)"
-            printf "docker=%s\n" "$(command -v docker >/dev/null && echo true || echo false)"
-            printf "podman=%s\n" "$(command -v podman >/dev/null && echo true || echo false)"
-            printf "compose=%s\n" "$(docker compose version >/dev/null 2>&1 && echo true || echo false)"
-        """
-        result = await SSHConnector.run(host, credential, command)
+        command = r"""bash -lc '
+            if [ -f /etc/os-release ]; then . /etc/os-release; fi
+            os_name="${ID:-unknown}"
+            os_version="${VERSION_ID:-unknown}"
+            kernel="$(uname -r 2>/dev/null || echo unknown)"
+            if command -v dnf >/dev/null 2>&1; then
+              package_manager="dnf"
+            elif command -v apt >/dev/null 2>&1; then
+              package_manager="apt"
+            elif command -v yum >/dev/null 2>&1; then
+              package_manager="yum"
+            else
+              package_manager="unknown"
+            fi
+            if command -v systemctl >/dev/null 2>&1; then systemd=true; else systemd=false; fi
+            if command -v docker >/dev/null 2>&1; then docker=true; else docker=false; fi
+            if command -v podman >/dev/null 2>&1; then podman=true; else podman=false; fi
+            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then compose=true; else compose=false; fi
+            printf "os_name=%s\n" "$os_name"
+            printf "os_version=%s\n" "$os_version"
+            printf "kernel=%s\n" "$kernel"
+            printf "package_manager=%s\n" "$package_manager"
+            printf "systemd=%s\n" "$systemd"
+            printf "docker=%s\n" "$docker"
+            printf "podman=%s\n" "$podman"
+            printf "compose=%s\n" "$compose"
+        '"""
+        result = await SSHConnector.run(host, credential, command, timeout_seconds=12)
         profile: dict[str, Any] = {"raw": result}
         for line in result["stdout"].splitlines():
             if "=" in line:
@@ -249,7 +277,7 @@ class HostInspector:
             printf "mem_available_kb=%s\n" "$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
             printf "disk_root=%s\n" "$(df -h / | awk 'NR==2 {print $5}')"
         """
-        result = await SSHConnector.run(host, credential, command)
+        result = await SSHConnector.run(host, credential, command, timeout_seconds=8)
         metrics: dict[str, Any] = {"raw": result}
         for line in result["stdout"].splitlines():
             if "=" in line:
@@ -271,7 +299,7 @@ class HostInspector:
         docker_cmd = "docker ps --format '{{.Names}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
         port_cmd = "ss -ltnp 2>/dev/null | tail -n +2 | head -n 20 || true"
 
-        systemd_result = await SSHConnector.run(host, credential, systemd_cmd)
+        systemd_result = await SSHConnector.run(host, credential, systemd_cmd, timeout_seconds=8)
         for line in systemd_result["stdout"].splitlines():
             parts = line.split()
             if len(parts) >= 4:
@@ -289,7 +317,7 @@ class HostInspector:
                     }
                 )
 
-        docker_result = await SSHConnector.run(host, credential, docker_cmd)
+        docker_result = await SSHConnector.run(host, credential, docker_cmd, timeout_seconds=8)
         for line in docker_result["stdout"].splitlines():
             if not line.strip():
                 continue
@@ -309,7 +337,7 @@ class HostInspector:
                 }
             )
 
-        port_result = await SSHConnector.run(host, credential, port_cmd)
+        port_result = await SSHConnector.run(host, credential, port_cmd, timeout_seconds=8)
         for line in port_result["stdout"].splitlines():
             ports = [int(match) for match in re.findall(r":(\d+)\s", line)]
             if ports:
@@ -500,18 +528,18 @@ class GoalDrivenOrchestrator:
             command = f"sudo userdel -r {parameters['username']}"
         else:
             command = "echo unsupported action"
-        return await SSHConnector.run(host, credential, command)
+        return await SSHConnector.run(host, credential, command, timeout_seconds=8)
 
     async def _verify(self, host: Host, credential: HostCredential | None, action_type: str, parameters: dict[str, Any]) -> dict[str, Any]:
         username = parameters.get("username")
         if action_type == "create_linux_user" and username:
-            return await SSHConnector.run(host, credential, f"getent passwd {username}")
+            return await SSHConnector.run(host, credential, f"getent passwd {username}", timeout_seconds=8)
         if action_type == "delete_linux_user" and username:
-            return await SSHConnector.run(host, credential, f"getent passwd {username} || true")
+            return await SSHConnector.run(host, credential, f"getent passwd {username} || true", timeout_seconds=8)
         if action_type == "query_disk":
-            return await SSHConnector.run(host, credential, "df -h")
+            return await SSHConnector.run(host, credential, "df -h", timeout_seconds=8)
         if action_type == "check_port" and parameters.get("port"):
-            return await SSHConnector.run(host, credential, f"ss -ltnp | grep ':{parameters['port']}' || true")
+            return await SSHConnector.run(host, credential, f"ss -ltnp | grep ':{parameters['port']}' || true", timeout_seconds=8)
         return {"success": True, "stdout": "No extra verification required", "stderr": "", "exit_code": 0}
 
     async def execute(self, prompt: str, session_id: str, selected_host_ids: list[int], auto_approve: bool) -> Task:
