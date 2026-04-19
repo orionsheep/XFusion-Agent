@@ -54,7 +54,7 @@ def decrypt_secret(secret: str) -> str:
 
 def authenticate_user(session: Session, username: str, password: str) -> User | None:
     user = session.exec(select(User).where(User.username == username)).first()
-    if not user or not verify_password(password, user.password_hash):
+    if not user or not user.is_active or not verify_password(password, user.password_hash):
         return None
     return user
 
@@ -74,6 +74,8 @@ def get_current_user(
     user = session.exec(select(User).where(User.username == username)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive")
     return user
 
 

@@ -48,8 +48,52 @@ export async function login(username: string, password: string) {
   return data
 }
 
+export async function fetchAuthStatus() {
+  const { data } = await api.get('/auth/status')
+  return data
+}
+
+export async function bootstrapAdmin(username: string, password: string) {
+  const { data } = await api.post('/auth/bootstrap', { username, password })
+  setStoredToken(data.access_token)
+  return data
+}
+
 export async function fetchCurrentUser() {
   const { data } = await api.get('/auth/me')
+  return data
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const { data } = await api.post('/auth/change-password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+  return data
+}
+
+export async function fetchUsers() {
+  const { data } = await api.get('/users')
+  return data
+}
+
+export async function createUser(payload: Record<string, unknown>) {
+  const { data } = await api.post('/users', payload)
+  return data
+}
+
+export async function updateUser(userId: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/users/${userId}`, payload)
+  return data
+}
+
+export async function resetUserPassword(userId: number, newPassword: string) {
+  const { data } = await api.post(`/users/${userId}/reset-password`, { new_password: newPassword })
+  return data
+}
+
+export async function deleteUser(userId: number) {
+  const { data } = await api.delete(`/users/${userId}`)
   return data
 }
 

@@ -25,8 +25,6 @@ class Settings(BaseSettings):
     claude_enabled: bool = True
     claude_model: str = "sonnet"
     agent_shared_secret: str = "change-me-agent-secret"
-    default_admin_username: str = "admin"
-    default_admin_password: str = "admin123"
     token_expire_minutes: int = 60 * 12
     frontend_origin: str = "http://localhost:5173"
     metric_collection_interval_seconds: int = 180

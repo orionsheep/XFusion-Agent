@@ -6,15 +6,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select
 
 from .api.routes import router
 from .core.config import get_settings
 from .core.database import engine, init_db, session_scope
-from .models.entities import User
 from .services.monitoring import MonitoringCoreService
 from .services.platform import HostInspector, HostRepository, now
-from .services.security import hash_password
 
 
 settings = get_settings()
@@ -22,17 +19,6 @@ settings = get_settings()
 
 def bootstrap_database() -> None:
     init_db()
-    with Session(engine) as session:
-        existing = session.exec(select(User).where(User.username == settings.default_admin_username)).first()
-        if not existing:
-            session.add(
-                User(
-                    username=settings.default_admin_username,
-                    password_hash=hash_password(settings.default_admin_password),
-                    role="admin",
-                )
-            )
-            session.commit()
 
 
 async def metric_collection_loop() -> None:

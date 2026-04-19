@@ -10,11 +10,17 @@ from ..models.entities import AgentNode, Approval, AuditLog, Host, Service, Task
 from ..schemas.api import (
     AgentHeartbeatRequest,
     AgentRegistrationRequest,
+    AuthStatusResponse,
     ApprovalDecisionRequest,
+    BootstrapAdminRequest,
     HostCreate,
     LoginRequest,
     LoginResponse,
+    PasswordChangeRequest,
+    PasswordResetRequest,
     TaskExecuteRequest,
+    UserCreateRequest,
+    UserUpdateRequest,
 )
 from ..services.platform import (
     DashboardService,
@@ -44,9 +50,53 @@ def serialize_host(host: Host) -> dict:
     return serialize_model(host)
 
 
+def serialize_user(user: User) -> dict:
+    payload = serialize_model(user)
+    payload.pop("password_hash", None)
+    return payload
+
+
+def count_active_admins(session: Session) -> int:
+    return len(
+        session.exec(select(User).where(User.role == "admin").where(User.is_active == True)).all()
+    )
+
+
+def ensure_last_admin_not_removed(session: Session, user: User, *, next_role: str | None = None, next_active: bool | None = None) -> None:
+    role_after = next_role if next_role is not None else user.role
+    active_after = next_active if next_active is not None else user.is_active
+    if user.role == "admin" and user.is_active and (role_after != "admin" or not active_after):
+        if count_active_admins(session) <= 1:
+            raise HTTPException(status_code=400, detail="至少保留一个启用状态的管理员账号")
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/auth/status", response_model=AuthStatusResponse)
+def auth_status(session: Annotated[Session, Depends(get_session)]) -> AuthStatusResponse:
+    user_count = len(session.exec(select(User)).all())
+    return AuthStatusResponse(initialized=user_count > 0, user_count=user_count)
+
+
+@router.post("/auth/bootstrap", response_model=LoginResponse)
+def bootstrap_admin(payload: BootstrapAdminRequest, session: Annotated[Session, Depends(get_session)]) -> LoginResponse:
+    user_count = len(session.exec(select(User)).all())
+    if user_count > 0:
+        raise HTTPException(status_code=409, detail="系统已初始化，不能重复创建管理员")
+    username = payload.username.strip()
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="管理员账号至少 3 个字符")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="管理员密码至少 8 个字符")
+    user = User(username=username, password_hash=hash_password(payload.password), role="admin", is_active=True)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    token = create_access_token(user.username)
+    return LoginResponse(access_token=token, user=serialize_user(user))
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -55,16 +105,135 @@ def login(payload: LoginRequest, session: Annotated[Session, Depends(get_session
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user.username)
-    user_payload = serialize_model(user)
-    user_payload.pop("password_hash", None)
-    return LoginResponse(access_token=token, user=user_payload)
+    return LoginResponse(access_token=token, user=serialize_user(user))
 
 
 @router.get("/auth/me")
 def me(current_user: Annotated[User, Depends(get_current_user)]) -> dict:
-    payload = serialize_model(current_user)
-    payload.pop("password_hash", None)
-    return payload
+    return serialize_user(current_user)
+
+
+@router.post("/auth/change-password")
+def change_password(
+    payload: PasswordChangeRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="新密码至少 8 个字符")
+    authenticated = authenticate_user(session, current_user.username, payload.current_password)
+    if not authenticated:
+        raise HTTPException(status_code=400, detail="当前密码不正确")
+    current_user.password_hash = hash_password(payload.new_password)
+    session.add(current_user)
+    session.commit()
+    upsert_audit(session, actor_id=current_user.id, event_type="user_password_changed", payload={"user_id": current_user.id})
+    return {"ok": True}
+
+
+@router.get("/users")
+def list_users(
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> list[dict]:
+    users = session.exec(select(User).order_by(User.id.asc())).all()
+    return [serialize_user(user) for user in users]
+
+
+@router.post("/users")
+def create_user(
+    payload: UserCreateRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> dict:
+    username = payload.username.strip()
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="账号名至少 3 个字符")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="密码至少 8 个字符")
+    existing = session.exec(select(User).where(User.username == username)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="账号已存在")
+    user = User(
+        username=username,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+        is_active=payload.is_active,
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    upsert_audit(session, actor_id=current_user.id, event_type="user_created", payload={"user": serialize_user(user)})
+    return serialize_user(user)
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: UserUpdateRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> dict:
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_last_admin_not_removed(session, user, next_role=payload.role, next_active=payload.is_active)
+    if payload.role is not None:
+        user.role = payload.role
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    upsert_audit(session, actor_id=current_user.id, event_type="user_updated", payload={"user": serialize_user(user)})
+    return serialize_user(user)
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    payload: PasswordResetRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> dict:
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="新密码至少 8 个字符")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.password_hash = hash_password(payload.new_password)
+    session.add(user)
+    session.commit()
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        event_type="user_password_reset",
+        payload={"user_id": user.id, "username": user.username},
+    )
+    return {"ok": True}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> dict:
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+    ensure_last_admin_not_removed(session, user, next_active=False, next_role="operator")
+    session.delete(user)
+    session.commit()
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        event_type="user_deleted",
+        payload={"user_id": user_id, "username": user.username},
+    )
+    return {"ok": True}
 
 
 @router.get("/dashboard/overview")

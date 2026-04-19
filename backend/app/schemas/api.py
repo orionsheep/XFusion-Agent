@@ -16,6 +16,37 @@ class LoginResponse(BaseModel):
     user: dict[str, Any]
 
 
+class AuthStatusResponse(BaseModel):
+    initialized: bool
+    user_count: int
+
+
+class BootstrapAdminRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "operator"
+    is_active: bool = True
+
+
+class UserUpdateRequest(BaseModel):
+    role: str | None = None
+    is_active: bool | None = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str
+
+
 class HostCreate(BaseModel):
     name: str
     address: str
