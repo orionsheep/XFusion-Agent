@@ -1,0 +1,47 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      XFUSION_DATABASE_URL: sqlite:////app/backend/xfusion.db
+      XFUSION_SECRET_KEY: local-dev-secret
+      XFUSION_FRONTEND_ORIGIN: http://localhost:5173
+    volumes:
+      - ./backend:/app/backend
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  node-agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    ports:
+      - "9001:9001"
+    volumes:
+      - ./agent:/app/agent
+
+  opa:
+    image: openpolicyagent/opa:latest
+    command:
+      - "run"
+      - "--server"
+      - "/policy/xfusion.rego"
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./infra/opa/policies:/policy

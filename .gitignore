@@ -1,0 +1,11 @@
+.DS_Store
+.venv/
+node_modules/
+frontend/dist/
+backend/xfusion.db
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+.env
+backend/.env

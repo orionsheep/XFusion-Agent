@@ -1,0 +1,24 @@
+[project]
+name = "xfusion-agent-backend"
+version = "0.1.0"
+description = "XFusion Agent control plane backend"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite",
+  "asyncssh",
+  "claude-agent-sdk",
+  "fastapi",
+  "httpx",
+  "orjson",
+  "passlib[bcrypt]",
+  "psutil",
+  "pydantic-settings",
+  "python-jose[cryptography]",
+  "python-multipart",
+  "sqlmodel",
+  "uvicorn[standard]",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
