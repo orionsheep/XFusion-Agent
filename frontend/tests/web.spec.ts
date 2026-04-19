@@ -11,6 +11,7 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.control-workbench__agent').getByRole('heading', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '展开主机态势工作台' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '进入网页全屏' }).first()).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.control-workbench__agent').getByRole('button', { name: '展开Agent 面板' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
   const fleetOverviewScroll = await page.locator('.fleet-overview-card').evaluate((node) => ({
@@ -20,8 +21,11 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   }))
   expect(fleetOverviewScroll.scrollHeight).toBeLessThanOrEqual(fleetOverviewScroll.clientHeight + 2)
   expect(fleetOverviewScroll.overflowY).toBe('visible')
+  await page.getByRole('button', { name: '进入网页全屏' }).first().click()
+  await expect(page.locator('.expandable-panel-card-shell--page-fullscreen')).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('button', { name: '退出网页全屏' }).first().click()
   await page.getByRole('button', { name: '展开主机态势工作台' }).click()
-  await expect(page.locator('.expandable-panel-card-shell--fullscreen')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.expandable-panel-card-shell--panel-fullscreen')).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: '退出主机态势工作台' }).click()
 
   await page.goto('/hosts/1')

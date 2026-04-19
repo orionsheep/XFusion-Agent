@@ -82,6 +82,7 @@ body {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+  position: relative;
 }
 
 .page-shell__body > * {
@@ -143,7 +144,14 @@ body {
   min-height: 0;
 }
 
-.expandable-panel-card-shell--fullscreen {
+.expandable-panel-card-shell--panel-fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 220;
+  pointer-events: none;
+}
+
+.expandable-panel-card-shell--page-fullscreen {
   position: fixed;
   inset: 12px;
   z-index: 1300;
@@ -158,8 +166,10 @@ body {
   pointer-events: auto;
 }
 
-.expandable-panel-card-shell--fullscreen > .ant-card,
-.expandable-panel-card-shell--fullscreen > .expandable-panel-card--fullscreen {
+.expandable-panel-card-shell--panel-fullscreen > .ant-card,
+.expandable-panel-card-shell--panel-fullscreen > .expandable-panel-card--fullscreen,
+.expandable-panel-card-shell--page-fullscreen > .ant-card,
+.expandable-panel-card-shell--page-fullscreen > .expandable-panel-card--fullscreen {
   position: relative;
   z-index: 1;
   height: 100%;
@@ -170,10 +180,14 @@ body {
   overflow: hidden !important;
 }
 
-.expandable-panel-card-shell--fullscreen .panel-card__content,
-.expandable-panel-card-shell--fullscreen .panel-subcard__content,
-.expandable-panel-card-shell--fullscreen .tasks-card__body-scroll,
-.expandable-panel-card-shell--fullscreen .table-scroll {
+.expandable-panel-card-shell--panel-fullscreen .panel-card__content,
+.expandable-panel-card-shell--panel-fullscreen .panel-subcard__content,
+.expandable-panel-card-shell--panel-fullscreen .tasks-card__body-scroll,
+.expandable-panel-card-shell--panel-fullscreen .table-scroll,
+.expandable-panel-card-shell--page-fullscreen .panel-card__content,
+.expandable-panel-card-shell--page-fullscreen .panel-subcard__content,
+.expandable-panel-card-shell--page-fullscreen .tasks-card__body-scroll,
+.expandable-panel-card-shell--page-fullscreen .table-scroll {
   min-height: 0;
 }
 
@@ -334,6 +348,7 @@ body {
   gap: 8px;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .tasks-card {
@@ -485,6 +500,7 @@ body {
   backdrop-filter: blur(18px);
   overflow: hidden;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.05);
+  position: relative;
 }
 
 .control-workbench__workspace {
