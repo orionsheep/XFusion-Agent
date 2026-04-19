@@ -28,6 +28,37 @@ def run(command: str) -> dict[str, Any]:
     }
 
 
+def extract_ports_from_text(value: str) -> list[int]:
+    return sorted({int(match) for match in re.findall(r":(\d+)(?:->|\s)", value or "")})
+
+
+def extract_ports_from_docker_inspect(item: dict[str, Any]) -> list[int]:
+    ports: set[int] = set()
+    port_map = item.get("NetworkSettings", {}).get("Ports") or {}
+    if isinstance(port_map, dict):
+        for container_port, bindings in port_map.items():
+            base = str(container_port).split("/", 1)[0]
+            if base.isdigit():
+                ports.add(int(base))
+            if isinstance(bindings, list):
+                for binding in bindings:
+                    host_port = str((binding or {}).get("HostPort") or "")
+                    if host_port.isdigit():
+                        ports.add(int(host_port))
+    return sorted(ports)
+
+
+def extract_pm2_ports(pm2_env: dict[str, Any]) -> list[int]:
+    env = pm2_env.get("env") if isinstance(pm2_env.get("env"), dict) else {}
+    ports: set[int] = set()
+    for key, value in env.items():
+        if "PORT" in str(key).upper():
+            text = str(value).strip()
+            if text.isdigit():
+                ports.add(int(text))
+    return sorted(ports)
+
+
 def profile() -> dict[str, Any]:
     os_name = "linux"
     os_version = "unknown"
@@ -56,6 +87,8 @@ def profile() -> dict[str, Any]:
         "docker": run("command -v docker")["success"],
         "podman": run("command -v podman")["success"],
         "compose": run("docker compose version")["success"],
+        "pm2": run("command -v pm2")["success"],
+        "supervisor": run("command -v supervisorctl")["success"],
         "collected_at": now(),
     }
 
@@ -112,11 +145,54 @@ def discover_services() -> list[dict[str, Any]]:
                     "confidence": 0.95,
                 }
             )
-    for line in run("docker ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true")["stdout"].splitlines():
-        if not line.strip():
+    compose_groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for line in run("docker ps -q | head -n 20 | xargs -r docker inspect --format '{{json .}}' 2>/dev/null || true")["stdout"].splitlines():
+        text = line.strip()
+        if not text.startswith("{"):
             continue
-        name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
-        port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
+        try:
+            item = json.loads(text)
+        except Exception:
+            continue
+        name = str(item.get("Name") or "").lstrip("/") or "container"
+        config = item.get("Config") or {}
+        labels = config.get("Labels") or {}
+        state = (item.get("State") or {}).get("Status") or "unknown"
+        ports = extract_ports_from_docker_inspect(item)
+        image = config.get("Image")
+        compose_project = labels.get("com.docker.compose.project")
+        compose_service = labels.get("com.docker.compose.service")
+        if compose_project and compose_service:
+            group_key = (compose_project, compose_service)
+            existing = compose_groups.get(group_key)
+            if not existing:
+                existing = {
+                    "service_key": f"compose:{compose_project}:{compose_service}",
+                    "name": f"{compose_project}/{compose_service}",
+                    "service_type": "compose-service",
+                    "runtime_type": "docker-compose",
+                    "status": state,
+                    "ports": [],
+                    "config_path": labels.get("com.docker.compose.project.config_files"),
+                    "log_hint": labels.get("com.docker.compose.project.working_dir"),
+                    "discovery_source": ["docker", "docker-compose"],
+                    "evidence_json": {
+                        "project": compose_project,
+                        "service": compose_service,
+                        "working_dir": labels.get("com.docker.compose.project.working_dir"),
+                        "config_files": labels.get("com.docker.compose.project.config_files"),
+                        "containers": [],
+                    },
+                    "confidence": 0.94,
+                }
+                compose_groups[group_key] = existing
+            existing["ports"] = sorted(set(existing["ports"]) | set(ports))
+            if state == "running":
+                existing["status"] = "running"
+            existing["evidence_json"]["containers"].append(
+                {"name": name, "image": image, "status": state, "ports": ports}
+            )
+            continue
         services.append(
             {
                 "service_key": f"docker:{name}",
@@ -124,31 +200,66 @@ def discover_services() -> list[dict[str, Any]]:
                 "service_type": "container",
                 "runtime_type": "docker",
                 "status": state,
-                "ports": port_values,
+                "ports": ports,
                 "discovery_source": ["docker"],
-                "evidence_json": {"raw": line, "image": image},
+                "evidence_json": {"name": name, "image": image, "labels": labels},
                 "confidence": 0.9,
             }
         )
+    services.extend(compose_groups.values())
     pm2_raw = run("pm2 jlist 2>/dev/null || true")["stdout"]
     if pm2_raw.strip().startswith("["):
         try:
             for item in json.loads(pm2_raw)[:20]:
+                pm2_env = item.get("pm2_env", {}) if isinstance(item.get("pm2_env"), dict) else {}
+                name = item.get("name") or pm2_env.get("name") or "pm2-app"
                 services.append(
                     {
-                        "service_key": f"pm2:{item.get('name')}",
-                        "name": item.get("name") or "pm2-app",
+                        "service_key": f"pm2:{pm2_env.get('pm_id', name)}",
+                        "name": name,
                         "service_type": "application",
                         "runtime_type": "pm2",
-                        "status": item.get("pm2_env", {}).get("status", "unknown"),
-                        "ports": [],
+                        "status": pm2_env.get("status", "unknown"),
+                        "ports": extract_pm2_ports(pm2_env),
+                        "process_ref": str(item.get("pid") or pm2_env.get("pm_id") or ""),
+                        "config_path": pm2_env.get("pm_exec_path") or pm2_env.get("cwd"),
+                        "log_hint": pm2_env.get("pm_out_log_path") or pm2_env.get("pm_log_path"),
                         "discovery_source": ["pm2"],
-                        "evidence_json": item,
-                        "confidence": 0.86,
+                        "evidence_json": {
+                            "pm2_env": {
+                                "pm_id": pm2_env.get("pm_id"),
+                                "status": pm2_env.get("status"),
+                                "cwd": pm2_env.get("cwd"),
+                                "exec_path": pm2_env.get("pm_exec_path"),
+                                "namespace": pm2_env.get("namespace"),
+                                "instances": pm2_env.get("instances"),
+                            },
+                            "monit": item.get("monit"),
+                        },
+                        "confidence": 0.9,
                     }
                 )
         except Exception:
             pass
+    for line in run("supervisorctl status all 2>/dev/null || supervisorctl status 2>/dev/null || true")["stdout"].splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        pid_match = re.search(r"pid\s+(\d+)", line)
+        services.append(
+            {
+                "service_key": f"supervisor:{parts[0]}",
+                "name": parts[0],
+                "service_type": "program",
+                "runtime_type": "supervisor",
+                "status": parts[1].lower(),
+                "ports": [],
+                "process_ref": pid_match.group(1) if pid_match else None,
+                "discovery_source": ["supervisor"],
+                "evidence_json": {"raw": line},
+                "confidence": 0.89,
+            }
+        )
     return services
 
 

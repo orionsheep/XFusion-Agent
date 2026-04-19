@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, List, Progress, Skeleton, Space, Statistic, Table, Tag, Typography } from 'antd'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { collectMonitoringSnapshots, fetchIntegrations, fetchOverview } from '../services/api'
 
 function metricPercent(value: unknown) {
@@ -183,7 +184,7 @@ export function DashboardPage() {
           </div>
         </Card>
 
-        <Card className="panel-card resizable-card" title="主机态势工作台">
+        <ExpandablePanelCard className="panel-card resizable-card" title="主机态势工作台" fullscreenLabel="主机态势工作台">
           <div className="panel-card__content">
             <Card
               type="inner"
@@ -228,7 +229,7 @@ export function DashboardPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
 
         {riskHosts.length || pendingApprovals.length || failedTasks.length ? (
           <Alert
@@ -238,7 +239,7 @@ export function DashboardPage() {
           />
         ) : null}
 
-        <Card className="panel-card resizable-card" title="风险与执行观察">
+        <ExpandablePanelCard className="panel-card resizable-card" title="风险与执行观察" fullscreenLabel="风险与执行观察">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card
@@ -352,7 +353,7 @@ export function DashboardPage() {
               </Card>
             </div>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
     </div>
   )

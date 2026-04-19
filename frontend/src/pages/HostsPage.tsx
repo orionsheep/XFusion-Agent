@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { createHost, discoverHost, fetchHosts, profileHost } from '../services/api'
 
 export function HostsPage() {
@@ -167,7 +168,7 @@ export function HostsPage() {
       </div>
 
       <div className="page-shell__body">
-        <Card className="panel-card resizable-card" title="纳管工作台">
+        <ExpandablePanelCard className="panel-card resizable-card" title="纳管工作台" fullscreenLabel="纳管工作台">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card type="inner" className="panel-subcard resizable-subcard" title="接入策略">
@@ -205,7 +206,7 @@ export function HostsPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
 
       <Modal

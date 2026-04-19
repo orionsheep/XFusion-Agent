@@ -43,6 +43,7 @@ import {
   fetchTasks,
   profileHost,
 } from '../services/api'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 
 function metricPercent(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value)
@@ -308,7 +309,7 @@ export function HostDetailPage() {
       </div>
 
       <div className="page-shell__body">
-        <Card className="host-hero panel-card resizable-card">
+        <ExpandablePanelCard className="host-hero panel-card resizable-card" fullscreenLabel="主机总览">
           <div className="panel-card__content">
             <div className="host-hero__top">
               <div>
@@ -382,7 +383,7 @@ export function HostDetailPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
 
         <Alert
           type={diagnosisType}
@@ -397,7 +398,7 @@ export function HostDetailPage() {
           showIcon
         />
 
-        <Card className="panel-card resizable-card" title="观测与画像">
+        <ExpandablePanelCard className="panel-card resizable-card" title="观测与画像" fullscreenLabel="观测与画像">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card
@@ -474,9 +475,9 @@ export function HostDetailPage() {
               </Card>
             </div>
           </div>
-        </Card>
+        </ExpandablePanelCard>
 
-        <Card className="panel-card resizable-card" title="服务与进程">
+        <ExpandablePanelCard className="panel-card resizable-card" title="服务与进程" fullscreenLabel="服务与进程">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card type="inner" className="panel-subcard resizable-subcard" title="已发现服务">
@@ -510,9 +511,9 @@ export function HostDetailPage() {
               </Card>
             </div>
           </div>
-        </Card>
+        </ExpandablePanelCard>
 
-        <Card className="panel-card resizable-card" title="近期 AI 操作记录">
+        <ExpandablePanelCard className="panel-card resizable-card" title="近期 AI 操作记录" fullscreenLabel="近期 AI 操作记录">
           <div className="panel-card__content">
             <Card type="inner" className="panel-subcard resizable-subcard" title="任务记录">
               <div className="panel-subcard__content">
@@ -542,7 +543,7 @@ export function HostDetailPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
     </div>
   )

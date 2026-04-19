@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Input, Modal, Space, Statistic, Table, Tag, Typography, message } from 'antd'
 import { useState } from 'react'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { decideApproval, fetchApprovals } from '../services/api'
 
 export function ApprovalsPage() {
@@ -37,7 +38,7 @@ export function ApprovalsPage() {
         <p className="page-subtitle">所有高风险动作都必须在这里完成最终放行。</p>
       </div>
       <div className="page-shell__body">
-        <Card className="panel-card resizable-card" title="审批工作台">
+        <ExpandablePanelCard className="panel-card resizable-card" title="审批工作台" fullscreenLabel="审批工作台">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card type="inner" className="panel-subcard resizable-subcard" title="审批概览">
@@ -90,7 +91,7 @@ export function ApprovalsPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
 
       <Modal

@@ -16,6 +16,7 @@ import {
   Typography,
   message,
 } from 'antd'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import {
   API_BASE_URL,
   changePassword,
@@ -156,7 +157,7 @@ export function SettingsPage() {
       </div>
 
       <div className="page-shell__body">
-        <Card className="panel-card resizable-card" title="平台配置与运行状态">
+        <ExpandablePanelCard className="panel-card resizable-card" title="平台配置与运行状态" fullscreenLabel="平台配置与运行状态">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
               <Card type="inner" className="panel-subcard resizable-subcard" title="运行配置">
@@ -349,7 +350,7 @@ export function SettingsPage() {
               </Card>
             </div>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
 
       <Modal

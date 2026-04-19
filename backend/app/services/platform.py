@@ -60,6 +60,38 @@ def serialize_model(instance: Any) -> dict[str, Any]:
         )
 
 
+def _extract_ports_from_text(value: str) -> list[int]:
+    ports = {int(match) for match in re.findall(r":(\d+)(?:->|\s)", value or "")}
+    return sorted(ports)
+
+
+def _extract_ports_from_docker_inspect(item: dict[str, Any]) -> list[int]:
+    ports: set[int] = set()
+    port_map = item.get("NetworkSettings", {}).get("Ports") or {}
+    if isinstance(port_map, dict):
+        for container_port, bindings in port_map.items():
+            base = str(container_port).split("/", 1)[0]
+            if base.isdigit():
+                ports.add(int(base))
+            if isinstance(bindings, list):
+                for binding in bindings:
+                    host_port = str((binding or {}).get("HostPort") or "")
+                    if host_port.isdigit():
+                        ports.add(int(host_port))
+    return sorted(ports)
+
+
+def _extract_pm2_ports(pm2_env: dict[str, Any]) -> list[int]:
+    ports: set[int] = set()
+    env = pm2_env.get("env") if isinstance(pm2_env.get("env"), dict) else {}
+    for key, value in env.items():
+        if "PORT" in str(key).upper():
+            text = str(value).strip()
+            if text.isdigit():
+                ports.add(int(text))
+    return sorted(ports)
+
+
 def upsert_audit(
     session: Session,
     *,
@@ -263,6 +295,8 @@ class HostInspector:
             if command -v docker >/dev/null 2>&1; then docker=true; else docker=false; fi
             if command -v podman >/dev/null 2>&1; then podman=true; else podman=false; fi
             if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then compose=true; else compose=false; fi
+            if command -v pm2 >/dev/null 2>&1; then pm2=true; else pm2=false; fi
+            if command -v supervisorctl >/dev/null 2>&1; then supervisor=true; else supervisor=false; fi
             printf "os_name=%s\n" "$os_name"
             printf "os_version=%s\n" "$os_version"
             printf "kernel=%s\n" "$kernel"
@@ -271,6 +305,8 @@ class HostInspector:
             printf "docker=%s\n" "$docker"
             printf "podman=%s\n" "$podman"
             printf "compose=%s\n" "$compose"
+            printf "pm2=%s\n" "$pm2"
+            printf "supervisor=%s\n" "$supervisor"
         '"""
         result = await SSHConnector.run(host, credential, command, timeout_seconds=12)
         profile: dict[str, Any] = {"raw": result}
@@ -377,9 +413,10 @@ class HostInspector:
 
         services: list[dict[str, Any]] = []
         systemd_cmd = "systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null | head -n 40"
-        docker_cmd = "docker ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
+        docker_inspect_cmd = "docker ps -q | head -n 20 | xargs -r docker inspect --format '{{json .}}' 2>/dev/null || true"
         podman_cmd = "podman ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
         pm2_cmd = "pm2 jlist 2>/dev/null || true"
+        supervisor_cmd = "supervisorctl status all 2>/dev/null || supervisorctl status 2>/dev/null || true"
         port_cmd = "ss -ltnp 2>/dev/null | tail -n +2 | head -n 40 || true"
 
         systemd_result = await SSHConnector.run(host, credential, systemd_cmd, timeout_seconds=8)
@@ -400,32 +437,84 @@ class HostInspector:
                     }
                 )
 
-        docker_result = await SSHConnector.run(host, credential, docker_cmd, timeout_seconds=8)
+        docker_result = await SSHConnector.run(host, credential, docker_inspect_cmd, timeout_seconds=10)
+        compose_groups: dict[tuple[str, str], dict[str, Any]] = {}
         for line in docker_result["stdout"].splitlines():
-            if not line.strip():
+            text = line.strip()
+            if not text.startswith("{"):
                 continue
-            name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
-            port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
+            try:
+                item = json.loads(text)
+            except Exception:
+                continue
+            name = str(item.get("Name") or "").lstrip("/") or "container"
+            config = item.get("Config") or {}
+            labels = config.get("Labels") or {}
+            state = (item.get("State") or {}).get("Status") or "unknown"
+            ports = _extract_ports_from_docker_inspect(item)
+            image = config.get("Image")
+            compose_project = labels.get("com.docker.compose.project")
+            compose_service = labels.get("com.docker.compose.service")
+            if compose_project and compose_service:
+                group_key = (compose_project, compose_service)
+                existing = compose_groups.get(group_key)
+                if not existing:
+                    existing = {
+                        "service_key": f"compose:{compose_project}:{compose_service}",
+                        "name": f"{compose_project}/{compose_service}",
+                        "service_type": "compose-service",
+                        "runtime_type": "docker-compose",
+                        "status": state,
+                        "ports": [],
+                        "process_ref": None,
+                        "config_path": labels.get("com.docker.compose.project.config_files"),
+                        "log_hint": labels.get("com.docker.compose.project.working_dir"),
+                        "discovery_source": ["docker", "docker-compose"],
+                        "evidence_json": {
+                            "project": compose_project,
+                            "service": compose_service,
+                            "working_dir": labels.get("com.docker.compose.project.working_dir"),
+                            "config_files": labels.get("com.docker.compose.project.config_files"),
+                            "containers": [],
+                        },
+                        "confidence": 0.94,
+                    }
+                    compose_groups[group_key] = existing
+                existing["ports"] = sorted(set(existing["ports"]) | set(ports))
+                if state == "running":
+                    existing["status"] = "running"
+                existing["evidence_json"]["containers"].append(
+                    {
+                        "name": name,
+                        "image": image,
+                        "status": state,
+                        "ports": ports,
+                    }
+                )
+                continue
+
             services.append(
                 {
                     "service_key": f"docker:{name}",
                     "name": name,
                     "service_type": "container",
                     "runtime_type": "docker",
-                    "status": state or "unknown",
-                    "ports": port_values,
+                    "status": state,
+                    "ports": ports,
                     "discovery_source": ["docker"],
-                    "evidence_json": {"raw": line, "image": image},
+                    "evidence_json": {"name": name, "image": image, "labels": labels},
                     "confidence": 0.9,
                 }
             )
+
+        services.extend(compose_groups.values())
 
         podman_result = await SSHConnector.run(host, credential, podman_cmd, timeout_seconds=8)
         for line in podman_result["stdout"].splitlines():
             if not line.strip():
                 continue
             name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
-            port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
+            port_values = _extract_ports_from_text(ports)
             services.append(
                 {
                     "service_key": f"podman:{name}",
@@ -445,25 +534,63 @@ class HostInspector:
             try:
                 pm2_apps = json.loads(pm2_result["stdout"])
                 for item in pm2_apps[:20]:
+                    pm2_env = item.get("pm2_env", {}) if isinstance(item.get("pm2_env"), dict) else {}
+                    name = item.get("name") or pm2_env.get("name") or "pm2-app"
                     services.append(
                         {
-                            "service_key": f"pm2:{item.get('name')}",
-                            "name": item.get("name") or "pm2-app",
+                            "service_key": f"pm2:{pm2_env.get('pm_id', name)}",
+                            "name": name,
                             "service_type": "application",
                             "runtime_type": "pm2",
-                            "status": item.get("pm2_env", {}).get("status", "unknown"),
-                            "ports": [],
+                            "status": pm2_env.get("status", "unknown"),
+                            "ports": _extract_pm2_ports(pm2_env),
+                            "process_ref": str(item.get("pid") or pm2_env.get("pm_id") or ""),
+                            "config_path": pm2_env.get("pm_exec_path") or pm2_env.get("cwd"),
+                            "log_hint": pm2_env.get("pm_out_log_path") or pm2_env.get("pm_log_path"),
                             "discovery_source": ["pm2"],
-                            "evidence_json": item,
-                            "confidence": 0.86,
+                            "evidence_json": {
+                                "pm2_env": {
+                                    "pm_id": pm2_env.get("pm_id"),
+                                    "status": pm2_env.get("status"),
+                                    "cwd": pm2_env.get("cwd"),
+                                    "exec_path": pm2_env.get("pm_exec_path"),
+                                    "namespace": pm2_env.get("namespace"),
+                                    "instances": pm2_env.get("instances"),
+                                },
+                                "monit": item.get("monit"),
+                            },
+                            "confidence": 0.9,
                         }
                     )
             except Exception:
                 pass
 
+        supervisor_result = await SSHConnector.run(host, credential, supervisor_cmd, timeout_seconds=8)
+        for line in supervisor_result["stdout"].splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            name = parts[0]
+            status = parts[1].lower()
+            pid_match = re.search(r"pid\s+(\d+)", line)
+            services.append(
+                {
+                    "service_key": f"supervisor:{name}",
+                    "name": name,
+                    "service_type": "program",
+                    "runtime_type": "supervisor",
+                    "status": status,
+                    "ports": [],
+                    "process_ref": pid_match.group(1) if pid_match else None,
+                    "discovery_source": ["supervisor"],
+                    "evidence_json": {"raw": line},
+                    "confidence": 0.89,
+                }
+            )
+
         port_result = await SSHConnector.run(host, credential, port_cmd, timeout_seconds=8)
         for line in port_result["stdout"].splitlines():
-            ports = [int(match) for match in re.findall(r":(\d+)\s", line)]
+            ports = _extract_ports_from_text(line)
             if ports:
                 services.append(
                     {

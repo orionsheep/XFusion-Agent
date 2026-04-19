@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { executeTask, fetchHosts, fetchPdfValidation, fetchTask, fetchTasks } from '../services/api'
 
 const examples = [
@@ -181,7 +182,7 @@ export function TasksPage() {
 
       <div className="tasks-board">
         <section className="tasks-board__column tasks-board__column--left">
-          <Card className="panel-card resizable-card tasks-card" title="任务发起与验收">
+          <ExpandablePanelCard className="panel-card resizable-card tasks-card" title="任务发起与验收" fullscreenLabel="任务发起与验收">
             <div className="panel-card__content">
               <Card type="inner" className="panel-subcard resizable-subcard tasks-card--composer" title="发起任务">
                 <div className="tasks-card__body-scroll">
@@ -276,11 +277,11 @@ export function TasksPage() {
                 </div>
               </Card>
             </div>
-          </Card>
+          </ExpandablePanelCard>
         </section>
 
         <section className="tasks-board__column tasks-board__column--right">
-          <Card className="panel-card resizable-card tasks-card" title="执行观察">
+          <ExpandablePanelCard className="panel-card resizable-card tasks-card" title="执行观察" fullscreenLabel="执行观察">
             <div className="panel-card__content">
               <Card type="inner" className="panel-subcard resizable-subcard tasks-card--timeline" title="任务时间线">
                 <div className="tasks-card__body-scroll">
@@ -366,7 +367,7 @@ export function TasksPage() {
                 </div>
               </Card>
             </div>
-          </Card>
+          </ExpandablePanelCard>
         </section>
       </div>
     </div>

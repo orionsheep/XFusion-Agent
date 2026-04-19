@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { ExpandablePanelCard } from './ExpandablePanelCard'
 import { executeTask, fetchHosts, fetchTask, fetchTasks } from '../services/api'
 
 const quickPrompts = [
@@ -181,9 +182,10 @@ export function AgentPanel() {
   return (
     <div className="agent-panel">
       {contextHolder}
-      <Card
+      <ExpandablePanelCard
         className="panel-card resizable-card agent-panel__card"
         title={<Typography.Title level={4} style={{ margin: 0 }}>XFusion Agent</Typography.Title>}
+        fullscreenLabel="Agent 面板"
         extra={
           <Space wrap>
             <Tag color="geekblue">session {sessionId}</Tag>
@@ -325,7 +327,7 @@ export function AgentPanel() {
             </div>
           </Card>
         </div>
-      </Card>
+      </ExpandablePanelCard>
     </div>
   )
 }

@@ -138,6 +138,45 @@ body {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.expandable-panel-card-shell {
+  position: relative;
+  min-height: 0;
+}
+
+.expandable-panel-card-shell--fullscreen {
+  position: fixed;
+  inset: 12px;
+  z-index: 1300;
+  pointer-events: none;
+}
+
+.expandable-panel-card__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(241, 245, 249, 0.88);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.expandable-panel-card-shell--fullscreen > .ant-card,
+.expandable-panel-card-shell--fullscreen > .expandable-panel-card--fullscreen {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  min-height: 0;
+  pointer-events: auto;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+  resize: none !important;
+  overflow: hidden !important;
+}
+
+.expandable-panel-card-shell--fullscreen .panel-card__content,
+.expandable-panel-card-shell--fullscreen .panel-subcard__content,
+.expandable-panel-card-shell--fullscreen .tasks-card__body-scroll,
+.expandable-panel-card-shell--fullscreen .table-scroll {
+  min-height: 0;
+}
+
 .table-scroll {
   flex: 1;
   min-height: 0;

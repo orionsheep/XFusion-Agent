@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Card, Statistic, Table, Tag } from 'antd'
 import dayjs from 'dayjs'
+import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { fetchAudit } from '../services/api'
 
 export function AuditPage() {
@@ -19,7 +20,7 @@ export function AuditPage() {
         <p className="page-subtitle">所有关键行为都在这里留存时间线和上下文。</p>
       </div>
       <div className="page-shell__body">
-        <Card className="panel-card resizable-card" title="审计中心">
+        <ExpandablePanelCard className="panel-card resizable-card" title="审计中心" fullscreenLabel="审计中心">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--3">
               <Card type="inner" className="panel-subcard resizable-subcard" title="事件总量">
@@ -70,7 +71,7 @@ export function AuditPage() {
               </div>
             </Card>
           </div>
-        </Card>
+        </ExpandablePanelCard>
       </div>
     </div>
   )
