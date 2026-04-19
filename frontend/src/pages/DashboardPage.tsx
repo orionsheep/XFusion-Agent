@@ -166,19 +166,16 @@ export function DashboardPage() {
 
   return (
     <div className="content-stack">
-      <Card className="hero-panel">
-        <div className="hero-panel__inner">
-          <div>
-            <div className="page-kicker">Fleet overview</div>
-            <h1 className="page-title">全局主机态势</h1>
-            <p className="page-subtitle">
-              首页先回答三个问题：哪些机器有风险、哪些事项卡住了、整组服务器的 CPU / 内存 / 磁盘目前是什么状态。
-            </p>
-          </div>
-          <Space wrap>
-            <Tag color="green">已纳管 {data?.stats?.hosts ?? 0} 台主机</Tag>
+      <Card className="dashboard-strip">
+        <div className="dashboard-strip__inner">
+          <Space wrap size={10}>
+            <Typography.Text strong>全局主机态势</Typography.Text>
+            <Typography.Text type="secondary">4 项核心指标优先展示</Typography.Text>
+          </Space>
+          <Space wrap size={8}>
+            <Tag color="green">已纳管 {data?.stats?.hosts ?? 0} 台</Tag>
             <Tag color={pendingApprovals.length ? 'gold' : 'default'}>待审批 {pendingApprovals.length}</Tag>
-            <Button loading={collectMutation.isPending} onClick={() => collectMutation.mutate()}>
+            <Button size="small" loading={collectMutation.isPending} onClick={() => collectMutation.mutate()}>
               刷新全部快照
             </Button>
           </Space>

@@ -67,6 +67,18 @@ body {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
 }
 
+.dashboard-strip {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.dashboard-strip__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .hero-panel__inner,
 .host-hero__top {
   display: flex;
@@ -274,7 +286,8 @@ body {
   .hero-panel__inner,
   .host-hero__top,
   .app-header__title,
-  .app-header__meta {
+  .app-header__meta,
+  .dashboard-strip__inner {
     flex-direction: column;
     align-items: flex-start;
   }
