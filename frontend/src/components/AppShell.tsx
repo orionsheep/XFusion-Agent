@@ -10,6 +10,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { Avatar, Button, Layout, Menu, Space, Typography } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { AgentPanel } from './AgentPanel'
 import { clearStoredToken, fetchOverview } from '../services/api'
 
 const { Header, Sider, Content } = Layout
@@ -46,14 +47,16 @@ export function AppShell() {
   }).length
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Sider
         width={260}
         theme="light"
+        className="app-nav"
         style={{
           borderRight: '1px solid rgba(15, 23, 42, 0.08)',
           background: 'rgba(255,255,255,0.72)',
           backdropFilter: 'blur(16px)',
+          overflow: 'auto',
         }}
       >
         <div style={{ padding: 24 }}>
@@ -71,12 +74,14 @@ export function AppShell() {
           style={{ borderInlineEnd: 'none', background: 'transparent' }}
         />
       </Sider>
-      <Layout>
+      <Layout style={{ minWidth: 0 }}>
         <Header
+          className="app-header"
           style={{
             background: 'transparent',
             padding: '16px 24px 0',
             height: 'auto',
+            flexShrink: 0,
           }}
         >
           <div
@@ -112,8 +117,15 @@ export function AppShell() {
             </Space>
           </div>
         </Header>
-        <Content style={{ padding: 24 }}>
-          <Outlet />
+        <Content className="app-content" style={{ padding: '16px 24px 24px', overflow: 'hidden' }}>
+          <div className="control-workbench">
+            <section className="control-workbench__workspace">
+              <Outlet />
+            </section>
+            <aside className="control-workbench__agent">
+              <AgentPanel />
+            </aside>
+          </div>
         </Content>
       </Layout>
     </Layout>

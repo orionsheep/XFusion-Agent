@@ -185,6 +185,16 @@ export function DashboardPage() {
         </div>
       </Card>
 
+      <Card title="服务器总览" extra={<Tag>{hostRiskView.length} 台主机</Tag>}>
+        <Table
+          rowKey="id"
+          dataSource={hostRiskView}
+          columns={fleetColumns}
+          pagination={false}
+          scroll={{ x: 980 }}
+        />
+      </Card>
+
       <div className="summary-grid">
         <Card><Statistic title="在线率" value={onlineRate} suffix="%" /></Card>
         <Card><Statistic title="风险主机" value={riskHosts.length} /></Card>
@@ -260,16 +270,6 @@ export function DashboardPage() {
           />
         </Card>
       </div>
-
-      <Card title="服务器总览" extra={<Tag>{hostRiskView.length} 台主机</Tag>}>
-        <Table
-          rowKey="id"
-          dataSource={hostRiskView}
-          columns={fleetColumns}
-          pagination={false}
-          scroll={{ x: 980 }}
-        />
-      </Card>
 
       <div className="two-col">
         <Card title="最近任务">

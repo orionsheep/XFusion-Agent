@@ -9,6 +9,7 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
 
   await expect(page.getByText('全局主机态势')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: 'Claude Agent' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/hosts/1')
@@ -18,7 +19,7 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
 
   await page.goto('/tasks')
   await expect(page.getByText('Goal-driven 任务中心')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('button', { name: '语音输入' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.control-workbench__workspace').getByRole('button', { name: '语音输入' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('PDF 验收矩阵')).toBeVisible({ timeout: 15_000 })
   await page.screenshot({ path: '/tmp/xfusion-tasks-pdf.png', fullPage: true })
 
