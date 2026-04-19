@@ -183,6 +183,74 @@ body {
   gap: 10px;
 }
 
+.tasks-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tasks-page__intro,
+.tasks-page__notice {
+  flex-shrink: 0;
+}
+
+.tasks-board {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.55fr);
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tasks-board__column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tasks-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tasks-card--composer {
+  flex: 0 0 58%;
+}
+
+.tasks-card--validation {
+  flex: 1 1 0;
+}
+
+.tasks-card--timeline {
+  flex: 0 0 44%;
+}
+
+.tasks-card--detail {
+  flex: 1 1 0;
+}
+
+.tasks-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tasks-card__body-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .task-composer__section {
   display: flex;
   flex-direction: column;
@@ -427,6 +495,15 @@ body {
   .metric-ribbon {
     grid-template-columns: 1fr 1fr;
   }
+
+  .tasks-board {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-card--composer,
+  .tasks-card--timeline {
+    flex-basis: auto;
+  }
 }
 
 @media (max-width: 768px) {
@@ -454,5 +531,22 @@ body {
   .task-composer__footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .tasks-page {
+    overflow: auto;
+  }
+
+  .tasks-board {
+    flex: none;
+    overflow: visible;
+  }
+
+  .tasks-board__column,
+  .tasks-card,
+  .tasks-card .ant-card-body,
+  .tasks-card__body-scroll {
+    overflow: visible;
+    min-height: auto;
   }
 }
