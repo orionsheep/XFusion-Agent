@@ -288,15 +288,40 @@ class HostInspector:
             except Exception:
                 pass
 
-        command = r"""
+        command = r"""bash -lc '
             set -e
-            printf "load=%s\n" "$(uptime | sed 's/.*load averages*: //')"
-            printf "mem_total_kb=%s\n" "$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-            printf "mem_available_kb=%s\n" "$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-            printf "disk_root=%s\n" "$(df -h / | awk 'NR==2 {print $5}')"
+            read cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
+            total1=$((user + nice + system + idle + iowait + irq + softirq + steal))
+            idle1=$((idle + iowait))
+            sleep 0.2
+            read cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
+            total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
+            idle2=$((idle + iowait))
+            total_delta=$((total2 - total1))
+            idle_delta=$((idle2 - idle1))
+            if [ "$total_delta" -gt 0 ]; then
+              cpu_percent=$(awk -v total="$total_delta" -v idle="$idle_delta" "BEGIN { printf \"%.2f\", (1 - idle / total) * 100 }")
+            else
+              cpu_percent="0.00"
+            fi
+            mem_total_kb=$(awk "/MemTotal/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
+            mem_available_kb=$(awk "/MemAvailable/ {print \$2}" /proc/meminfo 2>/dev/null || echo 0)
+            if [ "$mem_total_kb" -gt 0 ]; then
+              memory_percent=$(awk -v total="$mem_total_kb" -v available="$mem_available_kb" "BEGIN { printf \"%.2f\", (1 - available / total) * 100 }")
+            else
+              memory_percent="0.00"
+            fi
+            disk_root=$(df -P / | awk "NR==2 {print \$5}")
+            load=$(uptime | sed "s/.*load averages*: //; s/.*load average: //")
+            printf "cpu_percent=%s\n" "$cpu_percent"
+            printf "load=%s\n" "$load"
+            printf "mem_total_kb=%s\n" "$mem_total_kb"
+            printf "mem_available_kb=%s\n" "$mem_available_kb"
+            printf "memory_percent=%s\n" "$memory_percent"
+            printf "disk_root=%s\n" "$disk_root"
             echo "__TOP__"
-            ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 8
-        """
+            ps -eo pid=,user=,comm=,%cpu=,%mem= --sort=-%cpu | head -n 7
+        '"""
         result = await SSHConnector.run(host, credential, command, timeout_seconds=8)
         metrics: dict[str, Any] = {"raw": result}
         top_processes: list[dict[str, Any]] = []
@@ -323,6 +348,21 @@ class HostInspector:
             if "=" in line:
                 key, value = line.strip().split("=", 1)
                 metrics[key] = value
+        memory_percent = float(metrics.get("memory_percent") or 0)
+        memory_total_kb = int(metrics.get("mem_total_kb") or 0)
+        memory_available_kb = int(metrics.get("mem_available_kb") or 0)
+        disk_percent = str(metrics.get("disk_root") or "0").strip().rstrip("%")
+        cpu_percent = float(metrics.get("cpu_percent") or 0)
+        metrics["cpu_percent"] = cpu_percent
+        metrics["memory"] = {
+            "total_kb": memory_total_kb,
+            "available_kb": memory_available_kb,
+            "used_kb": max(memory_total_kb - memory_available_kb, 0),
+            "percent": memory_percent,
+        }
+        metrics["disk"] = {
+            "percent": float(disk_percent or 0),
+        }
         metrics["top_processes"] = top_processes
         return metrics
 
@@ -772,10 +812,21 @@ class GoalDrivenOrchestrator:
 class DashboardService:
     @staticmethod
     def overview(session: Session) -> dict[str, Any]:
+        from .monitoring import MonitoringCoreService
+
         hosts = list(session.exec(select(Host)).all())
         services = list(session.exec(select(Service)).all())
         tasks = list(session.exec(select(Task).order_by(Task.id.desc()).limit(10)).all())
         approvals = list(session.exec(select(Approval).order_by(Approval.id.desc()).limit(10)).all())
+        host_overview = []
+        for host in hosts[:20]:
+            summary = MonitoringCoreService.host_summary(session, host)
+            host_overview.append(
+                {
+                    **serialize_model(host),
+                    "monitoring_summary": summary,
+                }
+            )
         return {
             "stats": {
                 "hosts": len(hosts),
@@ -784,7 +835,7 @@ class DashboardService:
                 "pending_approvals": len([approval for approval in approvals if approval.status == "pending"]),
                 "recent_tasks": len(tasks),
             },
-            "hosts": [serialize_model(host) for host in hosts[:20]],
+            "hosts": host_overview,
             "services": [serialize_model(service) for service in services[:20]],
             "tasks": [serialize_model(task) for task in tasks],
             "approvals": [serialize_model(approval) for approval in approvals],

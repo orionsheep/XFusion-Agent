@@ -1,14 +1,16 @@
 import {
   AuditOutlined,
+  ClusterOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
   PoweroffOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
+import { useQuery } from '@tanstack/react-query'
 import { Avatar, Button, Layout, Menu, Space, Typography } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { clearStoredToken } from '../services/api'
+import { clearStoredToken, fetchOverview } from '../services/api'
 
 const { Header, Sider, Content } = Layout
 
@@ -24,6 +26,24 @@ const items = [
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { data: overview } = useQuery({
+    queryKey: ['overview-shell'],
+    queryFn: fetchOverview,
+    refetchInterval: 30000,
+  })
+  const selectedKey =
+    items.find((item) => item.key === '/'
+      ? location.pathname === '/'
+      : location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))?.key ?? '/'
+  const riskHostCount = (overview?.hosts ?? []).filter((host: any) => {
+    const values = host.monitoring_summary?.values ?? {}
+    return (
+      (host.status !== 'online' && host.status !== 'registered') ||
+      (values.cpu_percent ?? 0) >= 85 ||
+      (values.memory_percent ?? 0) >= 85 ||
+      (values.root_disk_percent ?? 0) >= 80
+    )
+  }).length
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -45,7 +65,7 @@ export function AppShell() {
           </Typography.Paragraph>
         </div>
         <Menu
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedKey]}
           items={items}
           onClick={({ key }) => navigate(key)}
           style={{ borderInlineEnd: 'none', background: 'transparent' }}
@@ -69,9 +89,13 @@ export function AppShell() {
           >
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
               <div>
-                <Typography.Text strong>全量版控制台</Typography.Text>
-                <div style={{ color: '#64748b' }}>
-                  Claude Agent SDK + SSH/Node Agent + 审批审计
+                <Typography.Text strong>AI 运维总控台</Typography.Text>
+                <div style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span>多服务器状态总览、任务编排、审批与审计。</span>
+                  <span className={`global-health ${riskHostCount ? 'global-health--risk' : ''}`}>
+                    <ClusterOutlined />
+                    风险主机 {riskHostCount}
+                  </span>
                 </div>
               </div>
               <Space>

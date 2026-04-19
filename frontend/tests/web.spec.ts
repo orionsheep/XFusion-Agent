@@ -7,8 +7,14 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await page.getByLabel('密码').fill('admin123')
   await page.getByRole('button', { name: '进入控制台' }).click()
 
-  await expect(page.getByText('Fleet Dashboard')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText('内建能力内核')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('全局主机态势')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
+
+  await page.goto('/hosts/1')
+  await expect(page.getByText('资源趋势')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('近期 AI 操作记录')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '重新采集主机指标' })).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/tasks')
   await expect(page.getByText('Goal-driven 任务中心')).toBeVisible({ timeout: 15_000 })

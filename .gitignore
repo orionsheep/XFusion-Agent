@@ -11,3 +11,13 @@ __pycache__/
 *.pyc
 .env
 backend/.env
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
+.env.local
+.env.*.local
+infra/prometheus/file_sd/*.json
