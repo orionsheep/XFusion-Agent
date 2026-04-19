@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from ..core.database import get_session
-from ..models.entities import AgentNode, Approval, AuditLog, Host, Service, Task, User
+from ..models.entities import AgentNode, Approval, AuditLog, Host, Service, Task, TaskStep, User
 from ..schemas.api import (
     AgentHeartbeatRequest,
     AgentRegistrationRequest,
@@ -18,7 +18,6 @@ from ..schemas.api import (
 )
 from ..services.platform import (
     DashboardService,
-    GoalDrivenOrchestrator,
     HostInspector,
     HostRepository,
     ServiceSync,
@@ -28,6 +27,7 @@ from ..services.platform import (
 )
 from ..services.integrations import IntegrationCatalog
 from ..services.monitoring import PrometheusService
+from ..services.orchestrator import GoalDrivenOrchestrator, build_validation_matrix
 from ..services.security import (
     authenticate_user,
     create_access_token,
@@ -195,7 +195,11 @@ def get_task(
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return serialize_model(task)
+    steps = session.exec(select(TaskStep).where(TaskStep.task_id == task_id).order_by(TaskStep.id.asc())).all()
+    return {
+        **serialize_model(task),
+        "steps": [serialize_model(step) for step in steps],
+    }
 
 
 @router.post("/tasks/execute")
@@ -240,6 +244,14 @@ def list_audit_logs(
 ) -> list[dict]:
     logs = session.exec(select(AuditLog).order_by(AuditLog.id.desc()).limit(200)).all()
     return [serialize_model(log) for log in logs]
+
+
+@router.get("/validation/pdf")
+def get_pdf_validation(
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    return {"items": build_validation_matrix(session)}
 
 
 @router.get("/integrations")

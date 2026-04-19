@@ -201,20 +201,61 @@ class AgentConnector:
 class PolicyEngine:
     @staticmethod
     def evaluate(action_type: str, parameters: dict[str, Any], host: Host) -> dict[str, Any]:
-        blast_radius = {"hosts": 1, "services": 1}
-        if action_type in {"query_disk", "check_port", "query_process", "discover_services"}:
-            return {"allowed": True, "risk_level": "L0", "approval_required": False, "blast_radius": blast_radius}
-        if action_type in {"create_linux_user", "delete_linux_user", "restart_service"}:
-            return {"allowed": True, "risk_level": "L3", "approval_required": True, "blast_radius": blast_radius}
-        if action_type in {"delete_path", "modify_sshd_config", "bulk_permission_change"}:
+        input_payload = {
+            "action_type": action_type,
+            "parameters": parameters,
+            "host": {
+                "id": host.id,
+                "name": host.name,
+                "environment": host.environment,
+                "risk_level": host.risk_level,
+            },
+        }
+        if settings.opa_url:
+            try:
+                response = httpx.post(settings.opa_url, json={"input": input_payload}, timeout=4.0)
+                response.raise_for_status()
+                result = response.json().get("result", {})
+                if isinstance(result, dict) and {"allowed", "risk_level", "approval_required"} <= set(result):
+                    return result
+                decision = result.get("decision") if isinstance(result, dict) else None
+                if isinstance(decision, dict):
+                    return decision
+            except Exception:
+                pass
+
+        blast_radius = {"hosts": 1, "services": 1, "paths": [parameters.get("path")] if parameters.get("path") else []}
+        if action_type in {"query_disk", "search_files", "check_port", "query_process", "discover_services", "diagnose_service"}:
+            return {
+                "allowed": True,
+                "risk_level": "L0" if action_type != "diagnose_service" else "L1",
+                "approval_required": False,
+                "reason": "read-only or diagnostic action",
+                "blast_radius": blast_radius,
+            }
+        if action_type in {"create_linux_user", "delete_linux_user", "restart_service", "kill_process"}:
+            return {
+                "allowed": True,
+                "risk_level": "L3",
+                "approval_required": True,
+                "reason": "state-changing action requires human approval",
+                "blast_radius": blast_radius,
+            }
+        if action_type in {"delete_path", "modify_security_config", "bulk_permission_change"}:
             return {
                 "allowed": False,
                 "risk_level": "L4",
                 "approval_required": False,
-                "reason": "Blocked by safety policy",
+                "reason": "Blocked by safety policy: dangerous filesystem, security config, or bulk permission change",
                 "blast_radius": blast_radius,
             }
-        return {"allowed": True, "risk_level": "L2", "approval_required": True, "blast_radius": blast_radius}
+        return {
+            "allowed": True,
+            "risk_level": "L2",
+            "approval_required": True,
+            "reason": "unknown action defaults to approval",
+            "blast_radius": blast_radius,
+        }
 
 
 class HostInspector:
@@ -276,13 +317,36 @@ class HostInspector:
             printf "mem_total_kb=%s\n" "$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
             printf "mem_available_kb=%s\n" "$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
             printf "disk_root=%s\n" "$(df -h / | awk 'NR==2 {print $5}')"
+            echo "__TOP__"
+            ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 8
         """
         result = await SSHConnector.run(host, credential, command, timeout_seconds=8)
         metrics: dict[str, Any] = {"raw": result}
+        top_processes: list[dict[str, Any]] = []
+        top_section = False
         for line in result["stdout"].splitlines():
+            if line.strip() == "__TOP__":
+                top_section = True
+                continue
+            if top_section:
+                if not line.strip() or line.strip().startswith("PID"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 5:
+                    top_processes.append(
+                        {
+                            "pid": parts[0],
+                            "user": parts[1],
+                            "command": parts[2],
+                            "cpu_percent": parts[3],
+                            "mem_percent": parts[4],
+                        }
+                    )
+                continue
             if "=" in line:
                 key, value = line.strip().split("=", 1)
                 metrics[key] = value
+        metrics["top_processes"] = top_processes
         return metrics
 
     @staticmethod
@@ -295,9 +359,11 @@ class HostInspector:
                 pass
 
         services: list[dict[str, Any]] = []
-        systemd_cmd = "systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null | head -n 20"
-        docker_cmd = "docker ps --format '{{.Names}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
-        port_cmd = "ss -ltnp 2>/dev/null | tail -n +2 | head -n 20 || true"
+        systemd_cmd = "systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null | head -n 40"
+        docker_cmd = "docker ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
+        podman_cmd = "podman ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
+        pm2_cmd = "pm2 jlist 2>/dev/null || true"
+        port_cmd = "ss -ltnp 2>/dev/null | tail -n +2 | head -n 40 || true"
 
         systemd_result = await SSHConnector.run(host, credential, systemd_cmd, timeout_seconds=8)
         for line in systemd_result["stdout"].splitlines():
@@ -321,7 +387,7 @@ class HostInspector:
         for line in docker_result["stdout"].splitlines():
             if not line.strip():
                 continue
-            name, state, ports = (line.split("|") + ["", "", ""])[:3]
+            name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
             port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
             services.append(
                 {
@@ -332,10 +398,51 @@ class HostInspector:
                     "status": state or "unknown",
                     "ports": port_values,
                     "discovery_source": ["docker"],
-                    "evidence_json": {"raw": line},
+                    "evidence_json": {"raw": line, "image": image},
                     "confidence": 0.9,
                 }
             )
+
+        podman_result = await SSHConnector.run(host, credential, podman_cmd, timeout_seconds=8)
+        for line in podman_result["stdout"].splitlines():
+            if not line.strip():
+                continue
+            name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
+            port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
+            services.append(
+                {
+                    "service_key": f"podman:{name}",
+                    "name": name,
+                    "service_type": "container",
+                    "runtime_type": "podman",
+                    "status": state or "unknown",
+                    "ports": port_values,
+                    "discovery_source": ["podman"],
+                    "evidence_json": {"raw": line, "image": image},
+                    "confidence": 0.88,
+                }
+            )
+
+        pm2_result = await SSHConnector.run(host, credential, pm2_cmd, timeout_seconds=8)
+        if pm2_result["success"] and pm2_result["stdout"].strip().startswith("["):
+            try:
+                pm2_apps = json.loads(pm2_result["stdout"])
+                for item in pm2_apps[:20]:
+                    services.append(
+                        {
+                            "service_key": f"pm2:{item.get('name')}",
+                            "name": item.get("name") or "pm2-app",
+                            "service_type": "application",
+                            "runtime_type": "pm2",
+                            "status": item.get("pm2_env", {}).get("status", "unknown"),
+                            "ports": [],
+                            "discovery_source": ["pm2"],
+                            "evidence_json": item,
+                            "confidence": 0.86,
+                        }
+                    )
+            except Exception:
+                pass
 
         port_result = await SSHConnector.run(host, credential, port_cmd, timeout_seconds=8)
         for line in port_result["stdout"].splitlines():

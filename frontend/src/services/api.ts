@@ -110,6 +110,11 @@ export async function fetchAudit() {
   return data
 }
 
+export async function fetchPdfValidation() {
+  const { data } = await api.get('/validation/pdf')
+  return data
+}
+
 export async function fetchIntegrations() {
   const { data } = await api.get('/integrations')
   return data

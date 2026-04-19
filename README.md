@@ -14,6 +14,7 @@
 - FastAPI 后端控制平面
 - Claude Agent SDK 接入位和 in-process MCP tools
 - Goal-driven 任务编排器
+- Claude 驱动的结构化意图规划、连续诊断和结果总结
 - 主机接入、主机画像、服务发现
 - Fleet / Host / Task / Approval / Audit Web 控制台
 - Node Agent 示例服务
@@ -139,8 +140,31 @@ docker compose up --build
 - `GET /api/approvals`
 - `POST /api/approvals/{id}`
 - `GET /api/audit`
+- `GET /api/validation/pdf`
 - `POST /api/agents/register`
 - `POST /api/agents/heartbeat`
+
+## 验证命令
+
+后端自动验收：
+
+```bash
+cd /Users/mychanging/Desktop/XFusion-Agent
+./.venv/bin/python scripts/verify_pdf_requirements.py
+```
+
+前端烟测：
+
+```bash
+cd /Users/mychanging/Desktop/XFusion-Agent/frontend
+npx playwright test --config=playwright.config.ts
+```
+
+相关文档：
+
+- [docs/PDF_ACCEPTANCE_MATRIX.md](/Users/mychanging/Desktop/XFusion-Agent/docs/PDF_ACCEPTANCE_MATRIX.md)
+- [docs/AGENT_CONFIGURATION.md](/Users/mychanging/Desktop/XFusion-Agent/docs/AGENT_CONFIGURATION.md)
+- [docs/OPEN_SOURCE_ATTRIBUTION.md](/Users/mychanging/Desktop/XFusion-Agent/docs/OPEN_SOURCE_ATTRIBUTION.md)
 
 ## 当前实现说明
 

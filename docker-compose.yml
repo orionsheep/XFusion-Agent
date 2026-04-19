@@ -9,6 +9,7 @@ services:
       XFUSION_DATABASE_URL: sqlite:////app/backend/xfusion.db
       XFUSION_SECRET_KEY: local-dev-secret
       XFUSION_FRONTEND_ORIGIN: http://localhost:5173
+      XFUSION_OPA_URL: http://opa:8181/v1/data/xfusion/authz/decision
       XFUSION_BESZEL_URL: http://localhost:8090
       XFUSION_BESZEL_INTERNAL_URL: http://beszel:8090
       XFUSION_PROMETHEUS_URL: http://localhost:9090
@@ -46,6 +47,7 @@ services:
     command:
       - "run"
       - "--server"
+      - "--addr=0.0.0.0:8181"
       - "/policy/xfusion.rego"
     ports:
       - "8181:8181"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import socket
 import subprocess
 from datetime import datetime, timezone
@@ -61,6 +63,17 @@ def profile() -> dict[str, Any]:
 def metrics() -> dict[str, Any]:
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
+    top_processes: list[dict[str, Any]] = []
+    for process in sorted(psutil.process_iter(["pid", "username", "name", "cpu_percent", "memory_percent"]), key=lambda item: item.info.get("cpu_percent") or 0, reverse=True)[:6]:
+        top_processes.append(
+            {
+                "pid": process.info.get("pid"),
+                "user": process.info.get("username"),
+                "command": process.info.get("name"),
+                "cpu_percent": process.info.get("cpu_percent"),
+                "mem_percent": round(process.info.get("memory_percent") or 0, 2),
+            }
+        )
     return {
         "cpu_percent": psutil.cpu_percent(interval=0.2),
         "load_average": list(os.getloadavg()),
@@ -76,13 +89,14 @@ def metrics() -> dict[str, Any]:
             "free": disk.free,
             "percent": disk.percent,
         },
+        "top_processes": top_processes,
         "collected_at": now(),
     }
 
 
 def discover_services() -> list[dict[str, Any]]:
     services: list[dict[str, Any]] = []
-    for line in run("systemctl list-units --type=service --all --no-pager --no-legend | head -n 25")["stdout"].splitlines():
+    for line in run("systemctl list-units --type=service --all --no-pager --no-legend | head -n 40")["stdout"].splitlines():
         parts = line.split()
         if len(parts) >= 4:
             services.append(
@@ -98,10 +112,11 @@ def discover_services() -> list[dict[str, Any]]:
                     "confidence": 0.95,
                 }
             )
-    for line in run("docker ps --format '{{.Names}}|{{.State}}|{{.Ports}}' 2>/dev/null || true")["stdout"].splitlines():
+    for line in run("docker ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true")["stdout"].splitlines():
         if not line.strip():
             continue
-        name, state, ports = (line.split("|") + ["", "", ""])[:3]
+        name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
+        port_values = [int(match) for match in re.findall(r":(\d+)->", ports)]
         services.append(
             {
                 "service_key": f"docker:{name}",
@@ -109,12 +124,31 @@ def discover_services() -> list[dict[str, Any]]:
                 "service_type": "container",
                 "runtime_type": "docker",
                 "status": state,
-                "ports": [],
+                "ports": port_values,
                 "discovery_source": ["docker"],
-                "evidence_json": {"raw": line},
+                "evidence_json": {"raw": line, "image": image},
                 "confidence": 0.9,
             }
         )
+    pm2_raw = run("pm2 jlist 2>/dev/null || true")["stdout"]
+    if pm2_raw.strip().startswith("["):
+        try:
+            for item in json.loads(pm2_raw)[:20]:
+                services.append(
+                    {
+                        "service_key": f"pm2:{item.get('name')}",
+                        "name": item.get("name") or "pm2-app",
+                        "service_type": "application",
+                        "runtime_type": "pm2",
+                        "status": item.get("pm2_env", {}).get("status", "unknown"),
+                        "ports": [],
+                        "discovery_source": ["pm2"],
+                        "evidence_json": item,
+                        "confidence": 0.86,
+                    }
+                )
+        except Exception:
+            pass
     return services
 
 
@@ -193,8 +227,19 @@ def execute(payload: ExecutionPayload) -> dict[str, Any]:
     params = payload.parameters
     if action == "query_disk":
         return run("df -h")
+    if action == "search_files":
+        query = str(params.get("query") or "").replace("'", "")
+        path = str(params.get("path") or "/etc")
+        if not path.startswith("/"):
+            path = f"/{path}"
+        if query:
+            return run(f"find '{path}' -maxdepth 6 \\( -iname '*{query}*' -o -path '*{query}*' \\) -print 2>/dev/null | head -n 60")
+        return run(f"find '{path}' -maxdepth 3 -print 2>/dev/null | head -n 60")
     if action == "query_process":
-        return run("ps aux | head -n 25")
+        process_name = params.get("process_name")
+        if process_name:
+            return run(f"ps aux | grep -i '{process_name}' | grep -v grep | head -n 25 || true")
+        return run("ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 25")
     if action == "check_port":
         port = params.get("port")
         return run(f"ss -ltnp | grep ':{port}' || true")
@@ -204,5 +249,11 @@ def execute(payload: ExecutionPayload) -> dict[str, Any]:
         return run(f"sudo userdel -r {params['username']}")
     if action == "diagnose_service":
         service = params.get("service_name") or "sshd"
-        return run(f"systemctl status {service} --no-pager || true; journalctl -u {service} -n 40 --no-pager || true")
+        return run(f"systemctl status {service} --no-pager || true; systemctl is-active {service} || true; journalctl -u {service} -n 60 --no-pager || true; ss -ltnp | tail -n +1 || true")
+    if action == "restart_service":
+        service = params.get("service_name") or "sshd"
+        return run(f"sudo systemctl restart {service} && systemctl is-active {service}")
+    if action == "kill_process":
+        pid = params.get("pid")
+        return run(f"sudo kill {pid} && sleep 1 && ps -p {pid} || true")
     raise HTTPException(status_code=400, detail="Unsupported action")

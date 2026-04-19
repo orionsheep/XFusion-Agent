@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
     claude_enabled: bool = True
     claude_model: str = "sonnet"
-    opa_url: str | None = None
+    opa_url: str | None = "http://localhost:8181/v1/data/xfusion/authz/decision"
     agent_shared_secret: str = "change-me-agent-secret"
     default_admin_username: str = "admin"
     default_admin_password: str = "admin123"

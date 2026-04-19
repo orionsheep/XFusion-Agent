@@ -133,6 +133,9 @@ export function HostDetailPage() {
                 <Typography.Text>磁盘</Typography.Text>
                 <Progress percent={Math.round(metrics.disk?.percent ?? 0)} strokeColor="#ca8a04" />
               </div>
+              <Typography.Text type="secondary">
+                Top Processes: {(metrics.top_processes ?? []).length}
+              </Typography.Text>
             </Space>
           </Card>
         </Col>
@@ -206,6 +209,20 @@ export function HostDetailPage() {
               <List.Item.Meta
                 title={service.name}
                 description={`${service.runtime_type} · ${service.status} · ${service.ports?.join(', ') || 'no exposed ports'}`}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+
+      <Card title="高占用进程">
+        <List
+          dataSource={metrics.top_processes ?? []}
+          renderItem={(item: any) => (
+            <List.Item>
+              <List.Item.Meta
+                title={`${item.command} (#${item.pid})`}
+                description={`user=${item.user} · CPU=${item.cpu_percent}% · MEM=${item.mem_percent}%`}
               />
             </List.Item>
           )}

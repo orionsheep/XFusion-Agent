@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Descriptions, List, Skeleton, Space, Tag, Typography, message } from 'antd'
-import { API_BASE_URL, fetchIntegrations, syncPrometheusTargets } from '../services/api'
+import { API_BASE_URL, fetchIntegrations, fetchPdfValidation, syncPrometheusTargets } from '../services/api'
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -8,6 +8,10 @@ export function SettingsPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['integrations'],
     queryFn: fetchIntegrations,
+  })
+  const { data: validation } = useQuery({
+    queryKey: ['pdf-validation'],
+    queryFn: fetchPdfValidation,
   })
   const syncMutation = useMutation({
     mutationFn: syncPrometheusTargets,
@@ -100,6 +104,18 @@ export function SettingsPage() {
             'Cockpit / Node Exporter / Beszel Agent 安装脚本模板',
           ]}
           renderItem={(item) => <List.Item>{item}</List.Item>}
+        />
+      </Card>
+
+      <Card title="PDF 要求覆盖">
+        <List
+          dataSource={validation?.items ?? []}
+          renderItem={(item: any) => (
+            <List.Item>
+              <List.Item.Meta title={item.requirement} description={item.evidence} />
+              <Tag color={item.status === 'pass' ? 'green' : 'gold'}>{item.status}</Tag>
+            </List.Item>
+          )}
         />
       </Card>
 
