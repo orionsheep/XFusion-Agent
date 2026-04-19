@@ -2,6 +2,7 @@ import { ArrowsAltOutlined, FullscreenExitOutlined, FullscreenOutlined, ShrinkOu
 import { Button, Card, Space } from 'antd'
 import type { CardProps } from 'antd'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 type ExpandablePanelCardProps = CardProps & {
   fullscreenLabel?: string
@@ -11,6 +12,7 @@ export function ExpandablePanelCard({
   extra,
   className,
   fullscreenLabel,
+  children,
   ...props
 }: ExpandablePanelCardProps) {
   const [fullscreen, setFullscreen] = useState(false)
@@ -57,6 +59,7 @@ export function ExpandablePanelCard({
       size="small"
       type="text"
       aria-label={pageFullscreen ? '退出网页全屏' : '进入网页全屏'}
+      title={pageFullscreen ? '退出网页全屏' : '进入网页全屏'}
       icon={pageFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
       onClick={togglePageFullscreen}
     />
@@ -64,23 +67,30 @@ export function ExpandablePanelCard({
 
   const mergedExtra = extra ? <Space size={8}>{extra}{pageFullscreenButton}{expandButton}</Space> : <Space size={8}>{pageFullscreenButton}{expandButton}</Space>
 
-  const shellClassName = [
-    'expandable-panel-card-shell',
-    fullscreen && !pageFullscreen ? 'expandable-panel-card-shell--panel-fullscreen' : '',
-    pageFullscreen ? 'expandable-panel-card-shell--page-fullscreen' : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const cardNode = (
+    <Card
+      {...props}
+      extra={mergedExtra}
+      className={`${className ?? ''}${fullscreen || pageFullscreen ? ' expandable-panel-card--fullscreen' : ''}`.trim()}
+    >
+      {children}
+    </Card>
+  )
+
+  if (pageFullscreen && typeof document !== 'undefined') {
+    return createPortal(
+      <div className="expandable-panel-card-shell expandable-panel-card-shell--page-fullscreen">
+        <div className="expandable-panel-card__backdrop" onClick={() => setPageFullscreen(false)} />
+        {cardNode}
+      </div>,
+      document.body,
+    )
+  }
 
   return (
-    <div className={shellClassName}>
-      {fullscreen && !pageFullscreen ? <div className="expandable-panel-card__backdrop" onClick={() => setFullscreen(false)} /> : null}
-      {pageFullscreen ? <div className="expandable-panel-card__backdrop" onClick={() => setPageFullscreen(false)} /> : null}
-      <Card
-        {...props}
-        extra={mergedExtra}
-        className={`${className ?? ''}${fullscreen || pageFullscreen ? ' expandable-panel-card--fullscreen' : ''}`.trim()}
-      />
+    <div className={`expandable-panel-card-shell${fullscreen ? ' expandable-panel-card-shell--panel-fullscreen' : ''}`}>
+      {fullscreen ? <div className="expandable-panel-card__backdrop" onClick={() => setFullscreen(false)} /> : null}
+      {cardNode}
     </div>
   )
 }
