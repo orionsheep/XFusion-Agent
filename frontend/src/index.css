@@ -57,6 +57,10 @@ body {
   min-height: 0;
 }
 
+.content-stack > * {
+  flex-shrink: 0;
+}
+
 .hero-panel,
 .host-hero {
   overflow: hidden;
@@ -229,6 +233,30 @@ body {
   overflow: auto;
   min-width: 240px;
   min-height: 120px;
+}
+
+.fleet-overview-card {
+  resize: none !important;
+  overflow: visible !important;
+  min-height: auto !important;
+}
+
+.fleet-overview-card .ant-card-body {
+  overflow: visible;
+  padding: 0 0 4px;
+}
+
+.fleet-overview-card .ant-table-wrapper {
+  overflow: visible;
+}
+
+.fleet-overview-card .ant-table-thead > tr > th,
+.fleet-overview-card .ant-table-tbody > tr > td {
+  padding: 10px 12px;
+}
+
+.fleet-overview-card .ant-progress {
+  margin-block: 0;
 }
 
 .agent-panel {

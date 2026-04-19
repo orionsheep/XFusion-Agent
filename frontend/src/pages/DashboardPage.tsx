@@ -182,11 +182,12 @@ export function DashboardPage() {
         </div>
       </Card>
 
-      <Card title="服务器总览" extra={<Tag>{hostRiskView.length} 台主机</Tag>}>
+      <Card className="fleet-overview-card" title="服务器总览" extra={<Tag>{hostRiskView.length} 台主机</Tag>}>
         <Table
           rowKey="id"
           dataSource={hostRiskView}
           columns={fleetColumns}
+          size="small"
           pagination={false}
           scroll={{ x: 980 }}
         />
