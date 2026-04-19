@@ -92,6 +92,63 @@ def _extract_pm2_ports(pm2_env: dict[str, Any]) -> list[int]:
     return sorted(ports)
 
 
+def _detect_database_engine(name: str, ports: list[int], evidence: dict[str, Any]) -> str | None:
+    haystack_parts = [name]
+    for key in ("raw", "image", "project", "service", "namespace"):
+        value = evidence.get(key)
+        if isinstance(value, str):
+            haystack_parts.append(value)
+    labels = evidence.get("labels")
+    if isinstance(labels, dict):
+        haystack_parts.extend(str(value) for value in labels.values())
+    containers = evidence.get("containers")
+    if isinstance(containers, list):
+        for item in containers:
+            if isinstance(item, dict):
+                haystack_parts.extend(str(item.get(key) or "") for key in ("name", "image"))
+    text = " ".join(haystack_parts).lower()
+    port_set = set(ports)
+    if "mariadb" in text:
+        return "mariadb"
+    if "mysql" in text or 3306 in port_set:
+        return "mysql"
+    if "postgres" in text or "postgresql" in text or 5432 in port_set:
+        return "postgresql"
+    if "redis" in text or 6379 in port_set:
+        return "redis"
+    if "mongo" in text or 27017 in port_set:
+        return "mongodb"
+    if "elasticsearch" in text or 9200 in port_set or 9300 in port_set:
+        return "elasticsearch"
+    if "clickhouse" in text or 8123 in port_set or 9000 in port_set:
+        return "clickhouse"
+    if "etcd" in text or 2379 in port_set or 2380 in port_set:
+        return "etcd"
+    return None
+
+
+def _annotate_service(item: dict[str, Any]) -> dict[str, Any]:
+    evidence = item.get("evidence_json")
+    if not isinstance(evidence, dict):
+        evidence = {}
+        item["evidence_json"] = evidence
+    engine = _detect_database_engine(item.get("name", ""), item.get("ports", []) or [], evidence)
+    if engine:
+        evidence["workload"] = "database"
+        evidence["database_engine"] = engine
+    elif item.get("runtime_type") == "kubernetes":
+        evidence["workload"] = "kubernetes-workload"
+    elif item.get("runtime_type") in {"docker", "docker-compose", "podman"}:
+        evidence.setdefault("workload", "container-service")
+    elif item.get("runtime_type") == "pm2":
+        evidence.setdefault("workload", "pm2-application")
+    elif item.get("runtime_type") == "supervisor":
+        evidence.setdefault("workload", "supervised-program")
+    elif item.get("runtime_type") == "systemd":
+        evidence.setdefault("workload", "system-service")
+    return item
+
+
 def upsert_audit(
     session: Session,
     *,
@@ -297,6 +354,7 @@ class HostInspector:
             if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then compose=true; else compose=false; fi
             if command -v pm2 >/dev/null 2>&1; then pm2=true; else pm2=false; fi
             if command -v supervisorctl >/dev/null 2>&1; then supervisor=true; else supervisor=false; fi
+            if command -v kubectl >/dev/null 2>&1 || command -v kubelet >/dev/null 2>&1; then kubernetes=true; else kubernetes=false; fi
             printf "os_name=%s\n" "$os_name"
             printf "os_version=%s\n" "$os_version"
             printf "kernel=%s\n" "$kernel"
@@ -307,6 +365,7 @@ class HostInspector:
             printf "compose=%s\n" "$compose"
             printf "pm2=%s\n" "$pm2"
             printf "supervisor=%s\n" "$supervisor"
+            printf "kubernetes=%s\n" "$kubernetes"
         '"""
         result = await SSHConnector.run(host, credential, command, timeout_seconds=12)
         profile: dict[str, Any] = {"raw": result}
@@ -492,6 +551,7 @@ class HostInspector:
         podman_cmd = "podman ps --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' 2>/dev/null || true"
         pm2_cmd = "pm2 jlist 2>/dev/null || true"
         supervisor_cmd = "supervisorctl status all 2>/dev/null || supervisorctl status 2>/dev/null || true"
+        kubernetes_cmd = "kubectl get pods -A -o json --request-timeout=5s 2>/dev/null || true"
         port_cmd = "ss -ltnp 2>/dev/null | tail -n +2 | head -n 40 || true"
 
         systemd_result = await SSHConnector.run(host, credential, systemd_cmd, timeout_seconds=8)
@@ -499,7 +559,8 @@ class HostInspector:
             parts = line.split()
             if len(parts) >= 4:
                 services.append(
-                    {
+                    _annotate_service(
+                        {
                         "service_key": f"systemd:{parts[0]}",
                         "name": parts[0],
                         "service_type": "systemd",
@@ -509,7 +570,8 @@ class HostInspector:
                         "discovery_source": ["systemd"],
                         "evidence_json": {"raw": line},
                         "confidence": 0.95,
-                    }
+                        }
+                    )
                 )
 
         docker_result = await SSHConnector.run(host, credential, docker_inspect_cmd, timeout_seconds=10)
@@ -534,7 +596,7 @@ class HostInspector:
                 group_key = (compose_project, compose_service)
                 existing = compose_groups.get(group_key)
                 if not existing:
-                    existing = {
+                    existing = _annotate_service({
                         "service_key": f"compose:{compose_project}:{compose_service}",
                         "name": f"{compose_project}/{compose_service}",
                         "service_type": "compose-service",
@@ -550,10 +612,11 @@ class HostInspector:
                             "service": compose_service,
                             "working_dir": labels.get("com.docker.compose.project.working_dir"),
                             "config_files": labels.get("com.docker.compose.project.config_files"),
+                            "labels": labels,
                             "containers": [],
                         },
                         "confidence": 0.94,
-                    }
+                    })
                     compose_groups[group_key] = existing
                 existing["ports"] = sorted(set(existing["ports"]) | set(ports))
                 if state == "running":
@@ -569,7 +632,7 @@ class HostInspector:
                 continue
 
             services.append(
-                {
+                _annotate_service({
                     "service_key": f"docker:{name}",
                     "name": name,
                     "service_type": "container",
@@ -579,7 +642,7 @@ class HostInspector:
                     "discovery_source": ["docker"],
                     "evidence_json": {"name": name, "image": image, "labels": labels},
                     "confidence": 0.9,
-                }
+                })
             )
 
         services.extend(compose_groups.values())
@@ -591,7 +654,7 @@ class HostInspector:
             name, image, state, ports = (line.split("|") + ["", "", "", ""])[:4]
             port_values = _extract_ports_from_text(ports)
             services.append(
-                {
+                _annotate_service({
                     "service_key": f"podman:{name}",
                     "name": name,
                     "service_type": "container",
@@ -601,7 +664,7 @@ class HostInspector:
                     "discovery_source": ["podman"],
                     "evidence_json": {"raw": line, "image": image},
                     "confidence": 0.88,
-                }
+                })
             )
 
         pm2_result = await SSHConnector.run(host, credential, pm2_cmd, timeout_seconds=8)
@@ -612,7 +675,7 @@ class HostInspector:
                     pm2_env = item.get("pm2_env", {}) if isinstance(item.get("pm2_env"), dict) else {}
                     name = item.get("name") or pm2_env.get("name") or "pm2-app"
                     services.append(
-                        {
+                        _annotate_service({
                             "service_key": f"pm2:{pm2_env.get('pm_id', name)}",
                             "name": name,
                             "service_type": "application",
@@ -635,7 +698,7 @@ class HostInspector:
                                 "monit": item.get("monit"),
                             },
                             "confidence": 0.9,
-                        }
+                        })
                     )
             except Exception:
                 pass
@@ -649,7 +712,7 @@ class HostInspector:
             status = parts[1].lower()
             pid_match = re.search(r"pid\s+(\d+)", line)
             services.append(
-                {
+                _annotate_service({
                     "service_key": f"supervisor:{name}",
                     "name": name,
                     "service_type": "program",
@@ -660,16 +723,69 @@ class HostInspector:
                     "discovery_source": ["supervisor"],
                     "evidence_json": {"raw": line},
                     "confidence": 0.89,
-                }
+                })
             )
 
+        kubernetes_result = await SSHConnector.run(host, credential, kubernetes_cmd, timeout_seconds=8)
+        text = kubernetes_result["stdout"].strip()
+        if kubernetes_result["success"] and text.startswith("{"):
+            try:
+                payload = json.loads(text)
+                for item in (payload.get("items") or [])[:30]:
+                    metadata = item.get("metadata") or {}
+                    spec = item.get("spec") or {}
+                    status_info = item.get("status") or {}
+                    namespace = metadata.get("namespace") or "default"
+                    pod_name = metadata.get("name") or "pod"
+                    labels = metadata.get("labels") or {}
+                    owner_refs = metadata.get("ownerReferences") or []
+                    owner = owner_refs[0] if owner_refs else {}
+                    container_specs = spec.get("containers") or []
+                    images = [container.get("image") for container in container_specs if container.get("image")]
+                    ports: set[int] = set()
+                    for container in container_specs:
+                        for port in container.get("ports") or []:
+                            value = port.get("containerPort")
+                            if isinstance(value, int):
+                                ports.add(value)
+                    services.append(
+                        _annotate_service({
+                            "service_key": f"k8s:{namespace}:{pod_name}",
+                            "name": f"{namespace}/{pod_name}",
+                            "service_type": str(owner.get("kind") or "pod").lower(),
+                            "runtime_type": "kubernetes",
+                            "status": str(status_info.get("phase") or "unknown").lower(),
+                            "ports": sorted(ports),
+                            "process_ref": spec.get("nodeName"),
+                            "config_path": namespace,
+                            "log_hint": f"kubectl logs -n {namespace} {pod_name}",
+                            "discovery_source": ["kubernetes"],
+                            "evidence_json": {
+                                "namespace": namespace,
+                                "pod": pod_name,
+                                "owner": owner,
+                                "labels": labels,
+                                "images": images,
+                                "node_name": spec.get("nodeName"),
+                            },
+                            "confidence": 0.92,
+                        })
+                    )
+            except Exception:
+                pass
+
         port_result = await SSHConnector.run(host, credential, port_cmd, timeout_seconds=8)
+        seen_listener_keys: set[str] = set()
         for line in port_result["stdout"].splitlines():
             ports = _extract_ports_from_text(line)
             if ports:
+                listener_key = f"port:{ports[0]}"
+                if listener_key in seen_listener_keys:
+                    continue
+                seen_listener_keys.add(listener_key)
                 services.append(
-                    {
-                        "service_key": f"port:{ports[0]}",
+                    _annotate_service({
+                        "service_key": listener_key,
                         "name": f"port-{ports[0]}",
                         "service_type": "listener",
                         "runtime_type": "process",
@@ -678,7 +794,7 @@ class HostInspector:
                         "discovery_source": ["socket-scan"],
                         "evidence_json": {"raw": line},
                         "confidence": 0.65,
-                    }
+                    })
                 )
         return services
 

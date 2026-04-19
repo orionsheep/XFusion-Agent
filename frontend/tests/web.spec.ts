@@ -37,6 +37,9 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await expect(page.getByText('资源趋势')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('近期 AI 操作记录')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '重新采集主机指标' })).toBeVisible({ timeout: 15_000 })
+  await page.goto('/hosts/4')
+  await expect(page.getByText('运行时分布')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('数据库服务')).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/tasks')
   await expect(page.getByText('Goal-driven 任务中心')).toBeVisible({ timeout: 15_000 })

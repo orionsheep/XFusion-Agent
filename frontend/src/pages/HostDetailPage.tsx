@@ -80,6 +80,28 @@ function getTaskStatusColor(status: string) {
   return 'blue'
 }
 
+function runtimeColor(runtime: string) {
+  if (runtime === 'systemd') return 'default'
+  if (runtime === 'pm2') return 'green'
+  if (runtime === 'docker') return 'blue'
+  if (runtime === 'docker-compose') return 'cyan'
+  if (runtime === 'supervisor') return 'purple'
+  if (runtime === 'kubernetes') return 'geekblue'
+  if (runtime === 'podman') return 'orange'
+  return 'default'
+}
+
+function engineColor(engine: string) {
+  if (engine === 'postgresql') return 'blue'
+  if (engine === 'mysql' || engine === 'mariadb') return 'gold'
+  if (engine === 'redis') return 'red'
+  if (engine === 'mongodb') return 'green'
+  if (engine === 'elasticsearch') return 'purple'
+  if (engine === 'clickhouse') return 'cyan'
+  if (engine === 'etcd') return 'orange'
+  return 'default'
+}
+
 export function HostDetailPage() {
   const { hostId } = useParams()
   const navigate = useNavigate()
@@ -182,6 +204,35 @@ export function HostDetailPage() {
     return tasks.filter((task: any) => (task.target_hosts ?? []).includes(hostIdNumber)).slice(0, 6)
   }, [hostIdNumber, tasks])
 
+  const services = data?.services ?? []
+  const runtimeCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const service of services) {
+      const runtime = service.runtime_type ?? 'unknown'
+      counts[runtime] = (counts[runtime] ?? 0) + 1
+    }
+    return Object.entries(counts).sort((left, right) => right[1] - left[1])
+  }, [services])
+  const databaseServices = useMemo(() => {
+    const seen = new Set<string>()
+    return services.filter((service: any) => {
+      if (service.evidence_json?.workload !== 'database') return false
+      const key = `${service.evidence_json?.database_engine ?? 'database'}:${service.service_key ?? service.name}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [services])
+  const databaseCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const service of databaseServices) {
+      const engine = service.evidence_json?.database_engine ?? 'database'
+      counts[engine] = (counts[engine] ?? 0) + 1
+    }
+    return Object.entries(counts).sort((left, right) => right[1] - left[1])
+  }, [databaseServices])
+  const kubernetesServices = useMemo(() => services.filter((service: any) => service.runtime_type === 'kubernetes'), [services])
+
   if (!Number.isFinite(hostIdNumber)) {
     return <Card><Empty description="无效的主机 ID" /></Card>
   }
@@ -199,7 +250,6 @@ export function HostDetailPage() {
   const memoryValue = metricPercent(monitoringValues.memory_percent ?? data.metrics_json?.memory?.percent)
   const diskValue = metricPercent(monitoringValues.root_disk_percent ?? data.metrics_json?.disk?.percent)
   const topProcesses = monitoringSummary?.top_processes ?? data.metrics_json?.top_processes ?? []
-  const services = data.services ?? []
   const runningServices = services.filter((service: any) => service.status === 'running').length
   const degradedServices = services.filter((service: any) => ['dead', 'failed', 'inactive'].includes(service.status)).length
   const exposedServices = services.filter((service: any) => (service.ports ?? []).length > 0).length
@@ -231,15 +281,19 @@ export function HostDetailPage() {
 
   const serviceColumns = [
     {
-      title: '服务',
+          title: '服务',
       key: 'service',
       render: (_: unknown, service: any) => (
         <div>
           <Typography.Text strong>{service.name}</Typography.Text>
           <div>
-            <Typography.Text type="secondary">
-              {service.runtime_type} · {service.service_type}
-            </Typography.Text>
+            <Space size={6} wrap>
+              <Tag color={runtimeColor(service.runtime_type)}>{service.runtime_type}</Tag>
+              <Tag>{service.service_type}</Tag>
+              {service.evidence_json?.database_engine ? (
+                <Tag color={engineColor(service.evidence_json.database_engine)}>{service.evidence_json.database_engine}</Tag>
+              ) : null}
+            </Space>
           </div>
         </div>
       ),
@@ -471,6 +525,41 @@ export function HostDetailPage() {
                       <Typography.Title level={4}>{exposedServices}</Typography.Title>
                     </div>
                   </div>
+
+                  <div className="inline-stats">
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">运行时分布</Typography.Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Space wrap>
+                          {runtimeCounts.length ? (
+                            runtimeCounts.map(([runtime, count]) => (
+                              <Tag key={runtime} color={runtimeColor(runtime)}>
+                                {runtime} {count}
+                              </Tag>
+                            ))
+                          ) : (
+                            <Typography.Text type="secondary">暂无服务发现结果</Typography.Text>
+                          )}
+                        </Space>
+                      </div>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">数据库服务</Typography.Text>
+                      <div style={{ marginTop: 8 }}>
+                        <Space wrap>
+                          {databaseCounts.length ? (
+                            databaseCounts.map(([engine, count]) => (
+                              <Tag key={engine} color={engineColor(engine)}>
+                                {engine} {count}
+                              </Tag>
+                            ))
+                          ) : (
+                            <Typography.Text type="secondary">当前未识别到数据库服务</Typography.Text>
+                          )}
+                        </Space>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </Card>
             </div>
@@ -480,6 +569,62 @@ export function HostDetailPage() {
         <ExpandablePanelCard className="panel-card resizable-card" title="服务与进程" fullscreenLabel="服务与进程">
           <div className="panel-card__content">
             <div className="panel-subgrid panel-subgrid--2">
+              <Card type="inner" className="panel-subcard resizable-subcard" title="运行时与数据库">
+                <div className="panel-subcard__content">
+                  <div className="inline-stats">
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">容器 / 编排</Typography.Text>
+                      <Typography.Title level={4}>
+                        {services.filter((service: any) => ['docker', 'docker-compose', 'podman', 'kubernetes'].includes(service.runtime_type)).length}
+                      </Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">PM2 / Supervisor</Typography.Text>
+                      <Typography.Title level={4}>
+                        {services.filter((service: any) => ['pm2', 'supervisor'].includes(service.runtime_type)).length}
+                      </Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">Kubernetes Workloads</Typography.Text>
+                      <Typography.Title level={4}>{kubernetesServices.length}</Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">数据库实例</Typography.Text>
+                      <Typography.Title level={4}>{databaseServices.length}</Typography.Title>
+                    </div>
+                  </div>
+
+                  <Card type="inner" size="small" title="数据库清单">
+                    <div className="panel-subcard__content">
+                      {databaseServices.length ? (
+                        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                          {databaseServices.slice(0, 8).map((service: any) => (
+                            <div key={service.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <div>
+                                <Typography.Text strong>{service.name}</Typography.Text>
+                                <div>
+                                  <Typography.Text type="secondary">
+                                    {(service.ports ?? []).length ? service.ports.join(', ') : '无暴露端口'}
+                                  </Typography.Text>
+                                </div>
+                              </div>
+                              <Space wrap size={6}>
+                                <Tag color={engineColor(service.evidence_json?.database_engine ?? 'database')}>
+                                  {service.evidence_json?.database_engine ?? 'database'}
+                                </Tag>
+                                <Tag color={runtimeColor(service.runtime_type)}>{service.runtime_type}</Tag>
+                              </Space>
+                            </div>
+                          ))}
+                        </Space>
+                      ) : (
+                        <Empty description="当前未识别到数据库服务" />
+                      )}
+                    </div>
+                  </Card>
+                </div>
+              </Card>
+
               <Card type="inner" className="panel-subcard resizable-subcard" title="已发现服务">
                 <div className="panel-subcard__content">
                   <div className="table-scroll">
