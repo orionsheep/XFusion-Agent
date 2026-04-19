@@ -165,160 +165,195 @@ export function DashboardPage() {
   ]
 
   return (
-    <div className="content-stack">
-      <Card className="dashboard-strip">
-        <div className="dashboard-strip__inner">
-          <Space wrap size={10}>
-            <Typography.Text strong>全局主机态势</Typography.Text>
-            <Typography.Text type="secondary">4 项核心指标优先展示</Typography.Text>
-          </Space>
-          <Space wrap size={8}>
-            <Tag color="green">已纳管 {data?.stats?.hosts ?? 0} 台</Tag>
-            <Tag color={pendingApprovals.length ? 'gold' : 'default'}>待审批 {pendingApprovals.length}</Tag>
-            <Button size="small" loading={collectMutation.isPending} onClick={() => collectMutation.mutate()}>
-              刷新全部快照
-            </Button>
-          </Space>
-        </div>
-      </Card>
-
-      <Card className="fleet-overview-card" title="服务器总览" extra={<Tag>{hostRiskView.length} 台主机</Tag>}>
-        <Table
-          rowKey="id"
-          dataSource={hostRiskView}
-          columns={fleetColumns}
-          size="small"
-          pagination={false}
-          scroll={{ x: 980 }}
-        />
-      </Card>
-
-      <Card className="summary-ribbon-card">
-        <div className="summary-ribbon">
-          <div className="summary-ribbon__item">
-            <Typography.Text type="secondary">在线率</Typography.Text>
-            <Statistic title={null} value={onlineRate} suffix="%" />
+    <div className="page-shell">
+      <div className="page-shell__body">
+        <Card className="dashboard-strip panel-card resizable-card">
+          <div className="dashboard-strip__inner">
+            <Space wrap size={10}>
+              <Typography.Text strong>全局主机态势</Typography.Text>
+              <Typography.Text type="secondary">4 项核心指标优先展示</Typography.Text>
+            </Space>
+            <Space wrap size={8}>
+              <Tag color="green">已纳管 {data?.stats?.hosts ?? 0} 台</Tag>
+              <Tag color={pendingApprovals.length ? 'gold' : 'default'}>待审批 {pendingApprovals.length}</Tag>
+              <Button size="small" loading={collectMutation.isPending} onClick={() => collectMutation.mutate()}>
+                刷新全部快照
+              </Button>
+            </Space>
           </div>
-          <div className="summary-ribbon__item">
-            <Typography.Text type="secondary">风险主机</Typography.Text>
-            <Statistic title={null} value={riskHosts.length} />
-          </div>
-          <div className="summary-ribbon__item">
-            <Typography.Text type="secondary">待审批</Typography.Text>
-            <Statistic title={null} value={pendingApprovals.length} />
-          </div>
-          <div className="summary-ribbon__item">
-            <Typography.Text type="secondary">运行中任务</Typography.Text>
-            <Statistic title={null} value={runningTasks.length} />
-          </div>
-          <div className="summary-ribbon__item">
-            <Typography.Text type="secondary">平均 CPU</Typography.Text>
-            <Statistic title={null} value={avgCpu} suffix="%" />
-          </div>
-        </div>
-      </Card>
-
-      {riskHosts.length || pendingApprovals.length || failedTasks.length ? (
-        <Alert
-          type={riskHosts.length || failedTasks.length ? 'warning' : 'info'}
-          message={`当前需要优先处理 ${riskHosts.length} 台风险主机、${pendingApprovals.length} 条审批、${failedTasks.length} 条失败任务。`}
-          showIcon
-        />
-      ) : null}
-
-      <div className="two-col">
-        <Card title="待处理事项" extra={<Tag color={pendingApprovals.length || failedTasks.length ? 'gold' : 'default'}>{pendingApprovals.length + failedTasks.length} 项</Tag>}>
-          <List
-            dataSource={[
-              ...pendingApprovals.map((approval: any) => ({
-                key: `approval-${approval.id}`,
-                title: `审批 #${approval.id}`,
-                description: `任务 ${approval.task_id} 等待处理`,
-                tag: { color: 'gold', text: '待审批' },
-                action: () => navigate('/approvals'),
-              })),
-              ...failedTasks.map((task: any) => ({
-                key: `task-${task.id}`,
-                title: task.title,
-                description: task.prompt,
-                tag: { color: 'red', text: '失败任务' },
-                action: () => navigate('/tasks'),
-              })),
-            ]}
-            locale={{ emptyText: '当前没有待处理事项' }}
-            renderItem={(item: any) => (
-              <List.Item
-                actions={[
-                  <Button type="link" key="open" onClick={item.action}>
-                    打开
-                  </Button>,
-                ]}
-              >
-                <List.Item.Meta title={item.title} description={item.description} />
-                <Tag color={item.tag.color}>{item.tag.text}</Tag>
-              </List.Item>
-            )}
-          />
         </Card>
 
-        <Card title="风险主机" extra={<Tag color={riskHosts.length ? 'red' : 'default'}>{riskHosts.length} 台</Tag>}>
-          <List
-            dataSource={riskHosts.slice(0, 5)}
-            locale={{ emptyText: '当前没有高风险主机' }}
-            renderItem={(host: any) => (
-              <List.Item
-                actions={[
-                  <Button type="link" key="detail" onClick={() => navigate(`/hosts/${host.id}`)}>
-                    查看详情
-                  </Button>,
-                ]}
-              >
-                <List.Item.Meta
-                  title={host.name}
-                  description={`${host.address} · ${host.alerts.join(' / ') || '暂无异常'}`}
-                />
-                <Tag color={host.status === 'online' || host.status === 'registered' ? 'green' : 'red'}>
-                  {host.status}
-                </Tag>
-              </List.Item>
-            )}
-          />
-        </Card>
-      </div>
+        <Card className="panel-card resizable-card" title="主机态势工作台">
+          <div className="panel-card__content">
+            <Card
+              type="inner"
+              className="panel-subcard resizable-subcard fleet-overview-card"
+              title="服务器总览"
+              extra={<Tag>{hostRiskView.length} 台主机</Tag>}
+            >
+              <div className="panel-subcard__content">
+                <div className="table-scroll">
+                  <Table
+                    rowKey="id"
+                    dataSource={hostRiskView}
+                    columns={fleetColumns}
+                    size="small"
+                    pagination={false}
+                    scroll={{ x: 980 }}
+                  />
+                </div>
+              </div>
+            </Card>
 
-      <div className="two-col">
-        <Card title="最近任务">
-          <List
-            dataSource={tasks.slice(0, 6)}
-            renderItem={(task: any) => (
-              <List.Item
-                actions={[
-                  <Button type="link" key="open" onClick={() => navigate('/tasks')}>
-                    查看
-                  </Button>,
-                ]}
-              >
-                <List.Item.Meta title={task.title} description={task.prompt} />
-                <Tag color={task.status === 'succeeded' ? 'green' : task.status === 'waiting_approval' ? 'gold' : task.status === 'failed' ? 'red' : 'blue'}>
-                  {task.status}
-                </Tag>
-              </List.Item>
-            )}
-          />
+            <Card type="inner" className="panel-subcard resizable-subcard summary-ribbon-card" title="关键指标">
+              <div className="summary-ribbon">
+                <div className="summary-ribbon__item">
+                  <Typography.Text type="secondary">在线率</Typography.Text>
+                  <Statistic title={null} value={onlineRate} suffix="%" />
+                </div>
+                <div className="summary-ribbon__item">
+                  <Typography.Text type="secondary">风险主机</Typography.Text>
+                  <Statistic title={null} value={riskHosts.length} />
+                </div>
+                <div className="summary-ribbon__item">
+                  <Typography.Text type="secondary">待审批</Typography.Text>
+                  <Statistic title={null} value={pendingApprovals.length} />
+                </div>
+                <div className="summary-ribbon__item">
+                  <Typography.Text type="secondary">运行中任务</Typography.Text>
+                  <Statistic title={null} value={runningTasks.length} />
+                </div>
+                <div className="summary-ribbon__item">
+                  <Typography.Text type="secondary">平均 CPU</Typography.Text>
+                  <Statistic title={null} value={avgCpu} suffix="%" />
+                </div>
+              </div>
+            </Card>
+          </div>
         </Card>
 
-        <Card title="内建能力模块">
-          <List
-            dataSource={integrations?.providers ?? []}
-            renderItem={(provider: any) => (
-              <List.Item>
-                <List.Item.Meta title={provider.name} description={provider.description} />
-                <Tag color={provider.status?.reachable ? 'green' : 'default'}>
-                  {provider.status?.reachable ? 'active' : 'inactive'}
-                </Tag>
-              </List.Item>
-            )}
+        {riskHosts.length || pendingApprovals.length || failedTasks.length ? (
+          <Alert
+            type={riskHosts.length || failedTasks.length ? 'warning' : 'info'}
+            message={`当前需要优先处理 ${riskHosts.length} 台风险主机、${pendingApprovals.length} 条审批、${failedTasks.length} 条失败任务。`}
+            showIcon
           />
+        ) : null}
+
+        <Card className="panel-card resizable-card" title="风险与执行观察">
+          <div className="panel-card__content">
+            <div className="panel-subgrid panel-subgrid--2">
+              <Card
+                type="inner"
+                className="panel-subcard resizable-subcard"
+                title="待处理事项"
+                extra={<Tag color={pendingApprovals.length || failedTasks.length ? 'gold' : 'default'}>{pendingApprovals.length + failedTasks.length} 项</Tag>}
+              >
+                <div className="panel-subcard__content">
+                  <List
+                    dataSource={[
+                      ...pendingApprovals.map((approval: any) => ({
+                        key: `approval-${approval.id}`,
+                        title: `审批 #${approval.id}`,
+                        description: `任务 ${approval.task_id} 等待处理`,
+                        tag: { color: 'gold', text: '待审批' },
+                        action: () => navigate('/approvals'),
+                      })),
+                      ...failedTasks.map((task: any) => ({
+                        key: `task-${task.id}`,
+                        title: task.title,
+                        description: task.prompt,
+                        tag: { color: 'red', text: '失败任务' },
+                        action: () => navigate('/tasks'),
+                      })),
+                    ]}
+                    locale={{ emptyText: '当前没有待处理事项' }}
+                    renderItem={(item: any) => (
+                      <List.Item
+                        actions={[
+                          <Button type="link" key="open" onClick={item.action}>
+                            打开
+                          </Button>,
+                        ]}
+                      >
+                        <List.Item.Meta title={item.title} description={item.description} />
+                        <Tag color={item.tag.color}>{item.tag.text}</Tag>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              </Card>
+
+              <Card
+                type="inner"
+                className="panel-subcard resizable-subcard"
+                title="风险主机"
+                extra={<Tag color={riskHosts.length ? 'red' : 'default'}>{riskHosts.length} 台</Tag>}
+              >
+                <div className="panel-subcard__content">
+                  <List
+                    dataSource={riskHosts.slice(0, 5)}
+                    locale={{ emptyText: '当前没有高风险主机' }}
+                    renderItem={(host: any) => (
+                      <List.Item
+                        actions={[
+                          <Button type="link" key="detail" onClick={() => navigate(`/hosts/${host.id}`)}>
+                            查看详情
+                          </Button>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={host.name}
+                          description={`${host.address} · ${host.alerts.join(' / ') || '暂无异常'}`}
+                        />
+                        <Tag color={host.status === 'online' || host.status === 'registered' ? 'green' : 'red'}>
+                          {host.status}
+                        </Tag>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              </Card>
+
+              <Card type="inner" className="panel-subcard resizable-subcard" title="最近任务">
+                <div className="panel-subcard__content">
+                  <List
+                    dataSource={tasks.slice(0, 6)}
+                    renderItem={(task: any) => (
+                      <List.Item
+                        actions={[
+                          <Button type="link" key="open" onClick={() => navigate('/tasks')}>
+                            查看
+                          </Button>,
+                        ]}
+                      >
+                        <List.Item.Meta title={task.title} description={task.prompt} />
+                        <Tag color={task.status === 'succeeded' ? 'green' : task.status === 'waiting_approval' ? 'gold' : task.status === 'failed' ? 'red' : 'blue'}>
+                          {task.status}
+                        </Tag>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              </Card>
+
+              <Card type="inner" className="panel-subcard resizable-subcard" title="内建能力模块">
+                <div className="panel-subcard__content">
+                  <List
+                    dataSource={integrations?.providers ?? []}
+                    renderItem={(provider: any) => (
+                      <List.Item>
+                        <List.Item.Meta title={provider.name} description={provider.description} />
+                        <Tag color={provider.status?.reachable ? 'green' : 'default'}>
+                          {provider.status?.reachable ? 'active' : 'inactive'}
+                        </Tag>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              </Card>
+            </div>
+          </div>
         </Card>
       </div>
     </div>

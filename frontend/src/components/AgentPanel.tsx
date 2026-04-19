@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Button,
+  Card,
   Empty,
   Input,
   List,
@@ -180,151 +181,151 @@ export function AgentPanel() {
   return (
     <div className="agent-panel">
       {contextHolder}
-      <div className="agent-panel__header">
-        <div>
-          <div className="page-kicker">Agent</div>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            XFusion Agent
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            右侧常驻会话面板，当前任务执行链路使用 Claude Agent SDK 做意图规划与结果解释。
-          </Typography.Text>
-        </div>
-        <Space wrap>
-          <Tag color="geekblue">session {sessionId}</Tag>
-          <Tag color="green">{selectedHosts.length} 台目标主机</Tag>
-        </Space>
-      </div>
-
-      <div className="agent-panel__context">
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder="选择目标主机"
-            options={hostOptions}
-            value={selectedHosts}
-            onChange={(values) => {
-              setSelectedHosts(values)
-              setRoutePinnedHostId(null)
-            }}
-            maxTagCount="responsive"
-          />
-          <Input
-            value={sessionId}
-            onChange={(event) => setSessionId(event.target.value)}
-            placeholder="会话 ID，用于连续对话上下文"
-          />
-        </Space>
-      </div>
-
-      <div className="agent-panel__body">
-        {currentTask ? (
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
-            <Alert
-              type={getTaskAlertType(currentTask.status)}
-              message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
-              showIcon
-            />
-            <div className="agent-panel__section">
-              <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                <Typography.Text strong>最近执行</Typography.Text>
-                {currentTask?.result_json?.summary ? (
-                  <Button type="link" icon={<SoundOutlined />} onClick={speakSummary}>
-                    语音播报
-                  </Button>
-                ) : null}
-              </Space>
-              <Typography.Title level={5} style={{ marginTop: 12 }}>
-                {currentTask.title}
-              </Typography.Title>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                {currentTask.prompt}
-              </Typography.Paragraph>
-              <Space wrap style={{ marginTop: 12 }}>
-                <Tag color="blue">{currentTask.task_type}</Tag>
-                <Tag color="purple">{currentTask.risk_level}</Tag>
-                <Tag color={currentTask.plan_json?.ai?.used_ai_planning ? 'green' : 'default'}>
-                  {currentTask.plan_json?.ai?.used_ai_planning ? 'Claude 规划' : '回退规划'}
-                </Tag>
-              </Space>
-            </div>
-
-            <div className="agent-panel__section">
-              <Typography.Text strong>执行时间线</Typography.Text>
-              <Timeline
-                style={{ marginTop: 12 }}
-                items={(currentTask.steps ?? []).slice(-6).map((step: any) => ({
-                  color: step.status === 'failed' ? 'red' : step.status === 'pending' ? 'gold' : 'green',
-                  children: (
-                    <Space direction="vertical" size={2}>
-                      <Typography.Text strong>{step.step_type}</Typography.Text>
-                      <Typography.Text type="secondary">{step.title}</Typography.Text>
-                    </Space>
-                  ),
-                }))}
+      <Card
+        className="panel-card resizable-card agent-panel__card"
+        title={<Typography.Title level={4} style={{ margin: 0 }}>XFusion Agent</Typography.Title>}
+        extra={
+          <Space wrap>
+            <Tag color="geekblue">session {sessionId}</Tag>
+            <Tag color="green">{selectedHosts.length} 台目标主机</Tag>
+          </Space>
+        }
+      >
+        <div className="panel-card__content">
+          <Card type="inner" className="panel-subcard resizable-subcard" title="Agent 上下文">
+            <div className="panel-subcard__content">
+              <Typography.Text type="secondary">
+                右侧常驻会话面板，当前任务执行链路使用 Claude Agent SDK 做意图规划与结果解释。
+              </Typography.Text>
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="选择目标主机"
+                options={hostOptions}
+                value={selectedHosts}
+                onChange={(values) => {
+                  setSelectedHosts(values)
+                  setRoutePinnedHostId(null)
+                }}
+                maxTagCount="responsive"
+              />
+              <Input
+                value={sessionId}
+                onChange={(event) => setSessionId(event.target.value)}
+                placeholder="会话 ID，用于连续对话上下文"
               />
             </div>
-          </Space>
-        ) : (
-          <Empty description="发送一个任务给右侧 Agent，结果会持续留在这里。" />
-        )}
+          </Card>
 
-        <div className="agent-panel__section">
-          <Typography.Text strong>近期任务</Typography.Text>
-          <List
-            style={{ marginTop: 12 }}
-            dataSource={tasks.slice(0, 8)}
-            locale={{ emptyText: '暂无历史任务' }}
-            renderItem={(task: any) => (
-              <List.Item
-                style={{ cursor: 'pointer', paddingInline: 0 }}
-                onClick={() => setSelectedTaskId(task.id)}
-              >
-                <List.Item.Meta
-                  title={task.title}
-                  description={
-                    <Typography.Text type="secondary">
-                      {task.prompt}
-                    </Typography.Text>
-                  }
-                />
-                <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
-              </List.Item>
-            )}
-          />
+          <Card type="inner" className="panel-subcard resizable-subcard agent-panel__subcard--live" title="当前观察">
+            <div className="panel-subcard__content">
+              {currentTask ? (
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <Alert
+                    type={getTaskAlertType(currentTask.status)}
+                    message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
+                    showIcon
+                  />
+                  <div className="agent-panel__section">
+                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Typography.Text strong>最近执行</Typography.Text>
+                      {currentTask?.result_json?.summary ? (
+                        <Button type="link" icon={<SoundOutlined />} onClick={speakSummary}>
+                          语音播报
+                        </Button>
+                      ) : null}
+                    </Space>
+                    <Typography.Title level={5} style={{ marginTop: 12 }}>
+                      {currentTask.title}
+                    </Typography.Title>
+                    <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                      {currentTask.prompt}
+                    </Typography.Paragraph>
+                    <Space wrap style={{ marginTop: 12 }}>
+                      <Tag color="blue">{currentTask.task_type}</Tag>
+                      <Tag color="purple">{currentTask.risk_level}</Tag>
+                      <Tag color={currentTask.plan_json?.ai?.used_ai_planning ? 'green' : 'default'}>
+                        {currentTask.plan_json?.ai?.used_ai_planning ? 'Claude 规划' : '回退规划'}
+                      </Tag>
+                    </Space>
+                  </div>
+
+                  <div className="agent-panel__section">
+                    <Typography.Text strong>执行时间线</Typography.Text>
+                    <Timeline
+                      style={{ marginTop: 12 }}
+                      items={(currentTask.steps ?? []).slice(-6).map((step: any) => ({
+                        color: step.status === 'failed' ? 'red' : step.status === 'pending' ? 'gold' : 'green',
+                        children: (
+                          <Space direction="vertical" size={2}>
+                            <Typography.Text strong>{step.step_type}</Typography.Text>
+                            <Typography.Text type="secondary">{step.title}</Typography.Text>
+                          </Space>
+                        ),
+                      }))}
+                    />
+                  </div>
+                </Space>
+              ) : (
+                <Empty description="发送一个任务给右侧 Agent，结果会持续留在这里。" />
+              )}
+            </div>
+          </Card>
+
+          <Card type="inner" className="panel-subcard resizable-subcard agent-panel__subcard--history" title="近期任务">
+            <div className="panel-subcard__content">
+              <List
+                dataSource={tasks.slice(0, 8)}
+                locale={{ emptyText: '暂无历史任务' }}
+                renderItem={(task: any) => (
+                  <List.Item
+                    style={{ cursor: 'pointer', paddingInline: 0 }}
+                    onClick={() => setSelectedTaskId(task.id)}
+                  >
+                    <List.Item.Meta
+                      title={task.title}
+                      description={<Typography.Text type="secondary">{task.prompt}</Typography.Text>}
+                    />
+                    <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
+                  </List.Item>
+                )}
+              />
+            </div>
+          </Card>
+
+          <Card type="inner" className="panel-subcard resizable-subcard agent-panel__subcard--composer" title="Agent 输入">
+            <div className="panel-subcard__content">
+              <Input.TextArea
+                rows={4}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="直接给 Agent 一个目标，例如：帮我检查 server-4 的磁盘和高占用进程"
+              />
+              <Space wrap>
+                {quickPrompts.map((item) => (
+                  <Tag key={item} style={{ cursor: 'pointer', padding: '6px 10px' }} onClick={() => setPrompt(item)}>
+                    {item}
+                  </Tag>
+                ))}
+              </Space>
+              <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
+                  {listening ? '正在听写' : '语音输入'}
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={!canExecute}
+                  loading={executeMutation.isPending}
+                  onClick={runPrompt}
+                >
+                  发送给 Agent
+                </Button>
+              </Space>
+            </div>
+          </Card>
         </div>
-      </div>
-
-      <div className="agent-panel__composer">
-        <Input.TextArea
-          rows={4}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          placeholder="直接给 Agent 一个目标，例如：帮我检查 server-4 的磁盘和高占用进程"
-        />
-        <Space wrap style={{ marginTop: 12 }}>
-          {quickPrompts.map((item) => (
-            <Tag key={item} style={{ cursor: 'pointer', padding: '6px 10px' }} onClick={() => setPrompt(item)}>
-              {item}
-            </Tag>
-          ))}
-        </Space>
-        <Space style={{ marginTop: 12, width: '100%', justifyContent: 'space-between' }}>
-          <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
-            {listening ? '正在听写' : '语音输入'}
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            disabled={!canExecute}
-            loading={executeMutation.isPending}
-            onClick={runPrompt}
-          >
-            发送给 Agent
-          </Button>
-        </Space>
-      </div>
+      </Card>
     </div>
   )
 }

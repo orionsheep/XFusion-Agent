@@ -181,181 +181,190 @@ export function TasksPage() {
 
       <div className="tasks-board">
         <section className="tasks-board__column tasks-board__column--left">
-          <Card className="tasks-card tasks-card--composer" title="发起任务">
-            <div className="tasks-card__body-scroll">
-              <div className="task-composer">
-                <div className="task-composer__section task-composer__section--muted">
-                  <Typography.Text strong>目标主机</Typography.Text>
-                  <Checkbox.Group
-                    className="task-composer__host-grid"
-                    options={hostOptions}
-                    value={selectedHosts}
-                    onChange={(values) => setSelectedHosts(values as number[])}
-                  />
-                </div>
+          <Card className="panel-card resizable-card tasks-card" title="任务发起与验收">
+            <div className="panel-card__content">
+              <Card type="inner" className="panel-subcard resizable-subcard tasks-card--composer" title="发起任务">
+                <div className="tasks-card__body-scroll">
+                  <div className="task-composer">
+                    <div className="task-composer__section task-composer__section--muted">
+                      <Typography.Text strong>目标主机</Typography.Text>
+                      <Checkbox.Group
+                        className="task-composer__host-grid"
+                        options={hostOptions}
+                        value={selectedHosts}
+                        onChange={(values) => setSelectedHosts(values as number[])}
+                      />
+                    </div>
 
-                <div className="task-composer__section task-composer__section--muted">
-                  <Typography.Text strong>会话上下文</Typography.Text>
-                  <Input
-                    value={sessionId}
-                    onChange={(event) => setSessionId(event.target.value)}
-                    placeholder="会话 ID，用于多轮上下文"
-                  />
-                </div>
+                    <div className="task-composer__section task-composer__section--muted">
+                      <Typography.Text strong>会话上下文</Typography.Text>
+                      <Input
+                        value={sessionId}
+                        onChange={(event) => setSessionId(event.target.value)}
+                        placeholder="会话 ID，用于多轮上下文"
+                      />
+                    </div>
 
-                <div className="task-composer__section">
-                  <Typography.Text strong>任务目标</Typography.Text>
-                  <Input.TextArea
-                    rows={7}
-                    value={prompt}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    placeholder="例如：帮我排查 service:sshd 为什么启动失败"
-                  />
-                  <Space wrap>
-                    {examples.map((item) => (
-                      <Tag
-                        key={item}
-                        style={{ cursor: 'pointer', padding: '6px 10px' }}
-                        onClick={() => setPrompt(item)}
+                    <div className="task-composer__section">
+                      <Typography.Text strong>任务目标</Typography.Text>
+                      <Input.TextArea
+                        rows={7}
+                        value={prompt}
+                        onChange={(event) => setPrompt(event.target.value)}
+                        placeholder="例如：帮我排查 service:sshd 为什么启动失败"
+                      />
+                      <Space wrap>
+                        {examples.map((item) => (
+                          <Tag
+                            key={item}
+                            style={{ cursor: 'pointer', padding: '6px 10px' }}
+                            onClick={() => setPrompt(item)}
+                          >
+                            {item}
+                          </Tag>
+                        ))}
+                      </Space>
+                    </div>
+
+                    <div className="task-composer__footer">
+                      <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
+                        {listening ? '正在听写' : '语音输入'}
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<PlayCircleOutlined />}
+                        disabled={!canExecute}
+                        loading={executeMutation.isPending}
+                        onClick={() => {
+                          if (!prompt.trim()) {
+                            messageApi.warning('先输入任务目标')
+                            return
+                          }
+                          if (!selectedHosts.length) {
+                            messageApi.warning('至少选择一台目标主机')
+                            return
+                          }
+                          executeMutation.mutate({
+                            prompt,
+                            selected_host_ids: selectedHosts,
+                            session_id: sessionId,
+                            auto_approve: false,
+                          })
+                        }}
                       >
-                        {item}
-                      </Tag>
-                    ))}
-                  </Space>
+                        执行任务
+                      </Button>
+                    </div>
+                  </div>
                 </div>
+              </Card>
 
-                <div className="task-composer__footer">
-                  <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
-                    {listening ? '正在听写' : '语音输入'}
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<PlayCircleOutlined />}
-                    disabled={!canExecute}
-                    loading={executeMutation.isPending}
-                    onClick={() => {
-                      if (!prompt.trim()) {
-                        messageApi.warning('先输入任务目标')
-                        return
-                      }
-                      if (!selectedHosts.length) {
-                        messageApi.warning('至少选择一台目标主机')
-                        return
-                      }
-                      executeMutation.mutate({
-                        prompt,
-                        selected_host_ids: selectedHosts,
-                        session_id: sessionId,
-                        auto_approve: false,
-                      })
-                    }}
-                  >
-                    执行任务
-                  </Button>
+              <Card type="inner" className="panel-subcard resizable-subcard tasks-card--validation" title="PDF 验收矩阵">
+                <div className="tasks-card__body-scroll">
+                  <List
+                    dataSource={validation?.items ?? []}
+                    renderItem={(item: any) => (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={item.requirement}
+                          description={item.evidence}
+                        />
+                        <Tag color={item.status === 'pass' ? 'green' : 'gold'}>{item.status}</Tag>
+                      </List.Item>
+                    )}
+                  />
                 </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="tasks-card tasks-card--validation" title="PDF 验收矩阵">
-            <div className="tasks-card__body-scroll">
-              <List
-                dataSource={validation?.items ?? []}
-                renderItem={(item: any) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      title={item.requirement}
-                      description={item.evidence}
-                    />
-                    <Tag color={item.status === 'pass' ? 'green' : 'gold'}>{item.status}</Tag>
-                  </List.Item>
-                )}
-              />
+              </Card>
             </div>
           </Card>
         </section>
 
         <section className="tasks-board__column tasks-board__column--right">
-          <Card className="tasks-card tasks-card--timeline" title="任务时间线">
-            <div className="tasks-card__body-scroll">
-              <List
-                dataSource={tasks}
-                renderItem={(task: any) => (
-                  <List.Item
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => setSelectedTaskId(task.id)}
-                  >
-                    <List.Item.Meta
-                      title={
-                        <Space wrap>
-                          <Typography.Text strong>{task.title}</Typography.Text>
-                          <Tag>{task.task_type}</Tag>
-                          <Tag color="blue">{task.risk_level}</Tag>
-                        </Space>
-                      }
-                      description={
-                        <Space direction="vertical" size={2}>
-                          <Typography.Text type="secondary">{task.prompt}</Typography.Text>
-                          <Typography.Text type="secondary">Goal: {task.goal}</Typography.Text>
-                          {task.result_json?.summary ? (
-                            <Typography.Text>{task.result_json.summary}</Typography.Text>
-                          ) : null}
-                        </Space>
-                      }
-                    />
-                    <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
-                  </List.Item>
-                )}
-              />
-            </div>
-          </Card>
-
-          <Card
-            className="tasks-card tasks-card--detail"
-            title={currentTask ? `任务详情 #${currentTask.id}` : '任务详情'}
-            extra={
-              currentTask?.result_json?.summary ? (
-                <Button icon={<SoundOutlined />} onClick={speakSummary}>
-                  语音播报结论
-                </Button>
-              ) : null
-            }
-          >
-            <div className="tasks-card__body-scroll">
-              {!currentTask ? (
-                <Empty description="选择一条任务查看 AI 计划与执行步骤" />
-              ) : (
-                <Space direction="vertical" style={{ width: '100%' }} size={16}>
-                  <Alert
-                    type={getTaskAlertType(currentTask.status)}
-                    message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
+          <Card className="panel-card resizable-card tasks-card" title="执行观察">
+            <div className="panel-card__content">
+              <Card type="inner" className="panel-subcard resizable-subcard tasks-card--timeline" title="任务时间线">
+                <div className="tasks-card__body-scroll">
+                  <List
+                    dataSource={tasks}
+                    renderItem={(task: any) => (
+                      <List.Item
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setSelectedTaskId(task.id)}
+                      >
+                        <List.Item.Meta
+                          title={
+                            <Space wrap>
+                              <Typography.Text strong>{task.title}</Typography.Text>
+                              <Tag>{task.task_type}</Tag>
+                              <Tag color="blue">{task.risk_level}</Tag>
+                            </Space>
+                          }
+                          description={
+                            <Space direction="vertical" size={2}>
+                              <Typography.Text type="secondary">{task.prompt}</Typography.Text>
+                              <Typography.Text type="secondary">Goal: {task.goal}</Typography.Text>
+                              {task.result_json?.summary ? (
+                                <Typography.Text>{task.result_json.summary}</Typography.Text>
+                              ) : null}
+                            </Space>
+                          }
+                        />
+                        <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
+                      </List.Item>
+                    )}
                   />
-                  <Card size="small" title="AI 计划">
-                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                      {JSON.stringify(currentTask.plan_json, null, 2)}
-                    </pre>
-                  </Card>
-                  <Card size="small" title="执行步骤">
-                    <Timeline
-                      items={(currentTask.steps ?? []).map((step: any) => ({
-                        color:
-                          step.status === 'failed' ? 'red' : step.status === 'pending' ? 'gold' : 'green',
-                        children: (
-                          <Space direction="vertical" size={4}>
-                            <Typography.Text strong>
-                              {step.step_type} · {step.title}
-                            </Typography.Text>
-                            <Typography.Text type="secondary">{step.status}</Typography.Text>
-                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                              {JSON.stringify(step.output_json, null, 2)}
-                            </pre>
-                          </Space>
-                        ),
-                      }))}
-                    />
-                  </Card>
-                </Space>
-              )}
+                </div>
+              </Card>
+
+              <Card
+                type="inner"
+                className="panel-subcard resizable-subcard tasks-card--detail"
+                title={currentTask ? `任务详情 #${currentTask.id}` : '任务详情'}
+                extra={
+                  currentTask?.result_json?.summary ? (
+                    <Button icon={<SoundOutlined />} onClick={speakSummary}>
+                      语音播报结论
+                    </Button>
+                  ) : null
+                }
+              >
+                <div className="tasks-card__body-scroll">
+                  {!currentTask ? (
+                    <Empty description="选择一条任务查看 AI 计划与执行步骤" />
+                  ) : (
+                    <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                      <Alert
+                        type={getTaskAlertType(currentTask.status)}
+                        message={currentTask.result_json?.summary ?? currentTask.plan_json?.plan_explanation ?? '任务执行中'}
+                      />
+                      <Card size="small" title="AI 计划">
+                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                          {JSON.stringify(currentTask.plan_json, null, 2)}
+                        </pre>
+                      </Card>
+                      <Card size="small" title="执行步骤">
+                        <Timeline
+                          items={(currentTask.steps ?? []).map((step: any) => ({
+                            color:
+                              step.status === 'failed' ? 'red' : step.status === 'pending' ? 'gold' : 'green',
+                            children: (
+                              <Space direction="vertical" size={4}>
+                                <Typography.Text strong>
+                                  {step.step_type} · {step.title}
+                                </Typography.Text>
+                                <Typography.Text type="secondary">{step.status}</Typography.Text>
+                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                                  {JSON.stringify(step.output_json, null, 2)}
+                                </pre>
+                              </Space>
+                            ),
+                          }))}
+                        />
+                      </Card>
+                    </Space>
+                  )}
+                </div>
+              </Card>
             </div>
           </Card>
         </section>

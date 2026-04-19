@@ -139,24 +139,74 @@ export function HostsPage() {
     [discoverMutation, navigate, profileMutation],
   )
 
+  const stats = useMemo(() => {
+    const byMode = {
+      ssh: data.filter((host: any) => host.connection_mode === 'ssh').length,
+      agent: data.filter((host: any) => host.connection_mode === 'agent').length,
+      hybrid: data.filter((host: any) => host.connection_mode === 'hybrid').length,
+    }
+    const online = data.filter((host: any) => ['online', 'registered'].includes(host.status)).length
+    return { byMode, online, total: data.length }
+  }, [data])
+
   return (
-    <div className="content-stack">
+    <div className="page-shell">
       {contextHolder}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div>
-          <h1 className="page-title">主机与服务纳管</h1>
-          <p className="page-subtitle">
-            支持 SSH / Node Agent / Hybrid 三种接入形态。
-          </p>
+      <div className="page-shell__header">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div>
+            <h1 className="page-title">主机与服务纳管</h1>
+            <p className="page-subtitle">
+              支持 SSH / Node Agent / Hybrid 三种接入形态。
+            </p>
+          </div>
+          <Button type="primary" onClick={() => setOpen(true)}>
+            新增主机
+          </Button>
         </div>
-        <Button type="primary" onClick={() => setOpen(true)}>
-          新增主机
-        </Button>
       </div>
 
-      <Card>
-        <Table rowKey="id" loading={isLoading} dataSource={data} columns={columns} pagination={false} />
-      </Card>
+      <div className="page-shell__body">
+        <Card className="panel-card resizable-card" title="纳管工作台">
+          <div className="panel-card__content">
+            <div className="panel-subgrid panel-subgrid--2">
+              <Card type="inner" className="panel-subcard resizable-subcard" title="接入策略">
+                <div className="panel-subcard__content">
+                  <Typography.Text>SSH：远程命令通道</Typography.Text>
+                  <Typography.Text>Node Agent：节点本地执行与采集</Typography.Text>
+                  <Typography.Text>Hybrid：Agent 为主，SSH 兜底</Typography.Text>
+                </div>
+              </Card>
+              <Card type="inner" className="panel-subcard resizable-subcard" title="纳管概览">
+                <div className="panel-subcard__content">
+                  <Space wrap>
+                    <Tag color="green">在线 {stats.online}</Tag>
+                    <Tag>总主机 {stats.total}</Tag>
+                    <Tag color="cyan">SSH {stats.byMode.ssh}</Tag>
+                    <Tag color="blue">Agent {stats.byMode.agent}</Tag>
+                    <Tag color="purple">Hybrid {stats.byMode.hybrid}</Tag>
+                  </Space>
+                </div>
+              </Card>
+            </div>
+
+            <Card type="inner" className="panel-subcard resizable-subcard" title="主机列表">
+              <div className="panel-subcard__content">
+                <div className="table-scroll">
+                  <Table
+                    rowKey="id"
+                    loading={isLoading}
+                    dataSource={data}
+                    columns={columns}
+                    pagination={false}
+                    scroll={{ x: 980 }}
+                  />
+                </div>
+              </div>
+            </Card>
+          </div>
+        </Card>
+      </div>
 
       <Modal
         open={open}

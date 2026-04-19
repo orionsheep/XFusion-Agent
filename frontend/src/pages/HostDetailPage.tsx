@@ -295,217 +295,255 @@ export function HostDetailPage() {
   ]
 
   return (
-    <div className="content-stack">
+    <div className="page-shell">
       {contextHolder}
-      <Breadcrumb
-        items={[
-          { title: 'Dashboard' },
-          { title: '主机与服务' },
-          { title: data.name },
-        ]}
-      />
-
-      <Card className="host-hero">
-        <div className="host-hero__top">
-          <div>
-            <div className="page-kicker">Host detail</div>
-            <h1 className="page-title">{data.name}</h1>
-            <p className="page-subtitle">
-              {data.address} · {data.os_type ?? 'unknown'} {data.os_version ?? ''} · 最近采样 {formatTime(monitoringSummary?.sampled_at)}
-            </p>
-            <Space wrap style={{ marginTop: 12 }}>
-              <Tag color={data.status === 'online' || data.status === 'registered' ? 'green' : 'red'}>{data.status}</Tag>
-              <Tag color="cyan">{data.connection_mode}</Tag>
-              <Tag color="blue">{data.environment}</Tag>
-              <Tag color={cpuPressure.color}>CPU {cpuPressure.text}</Tag>
-              <Tag color={memoryPressure.color}>内存 {memoryPressure.text}</Tag>
-              <Tag color={diskPressure.color}>磁盘 {diskPressure.text}</Tag>
-            </Space>
-          </div>
-          <Space wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/hosts')}>
-              返回主机列表
-            </Button>
-            <Button
-              icon={<ThunderboltOutlined />}
-              onClick={() => navigate('/tasks', { state: { selectedHosts: [hostIdNumber] } })}
-            >
-              去任务中心
-            </Button>
-            <Button icon={<ReloadOutlined />} loading={profileMutation.isPending} onClick={() => profileMutation.mutate()}>
-              刷新画像
-            </Button>
-            <Button icon={<FundOutlined />} loading={metricsMutation.isPending} onClick={() => metricsMutation.mutate()}>
-              重新采集主机指标
-            </Button>
-            <Button
-              type="primary"
-              icon={<DeploymentUnitOutlined />}
-              loading={discoverMutation.isPending}
-              onClick={() => discoverMutation.mutate()}
-            >
-              重新扫描服务暴露面
-            </Button>
-          </Space>
-        </div>
-
-        <div className="metric-ribbon">
-          <div className="metric-ribbon__item">
-            <Typography.Text type="secondary">CPU 使用率</Typography.Text>
-            <Statistic title={null} value={cpuValue ?? 'N/A'} suffix={cpuValue === null ? '' : '%'} />
-            {cpuValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={cpuValue} strokeColor="#0f766e" showInfo={false} />}
-          </div>
-          <div className="metric-ribbon__item">
-            <Typography.Text type="secondary">内存使用率</Typography.Text>
-            <Statistic title={null} value={memoryValue ?? 'N/A'} suffix={memoryValue === null ? '' : '%'} />
-            {memoryValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={memoryValue} strokeColor="#0891b2" showInfo={false} />}
-          </div>
-          <div className="metric-ribbon__item">
-            <Typography.Text type="secondary">根分区使用率</Typography.Text>
-            <Statistic title={null} value={diskValue ?? 'N/A'} suffix={diskValue === null ? '' : '%'} />
-            {diskValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={diskValue} strokeColor="#ca8a04" showInfo={false} />}
-          </div>
-          <div className="metric-ribbon__item">
-            <Typography.Text type="secondary">Load 1m</Typography.Text>
-            <Statistic
-              title={null}
-              value={monitoringValues.load1 ?? 'N/A'}
-              formatter={(value) => (typeof value === 'number' ? value.toFixed(2) : value)}
-            />
-            <Typography.Text type="secondary">在线采样 {monitoringValues.up ? '正常' : '异常'}</Typography.Text>
-          </div>
-        </div>
-      </Card>
-
-      <Alert
-        type={diagnosisType}
-        message={diagnosisTitle}
-        description={
-          <div>
-            {diagnosisLines.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
-          </div>
-        }
-        showIcon
-      />
-
-      <div className="detail-grid">
-        <Card
-          title="资源趋势"
-          extra={
-            <Segmented
-              size="small"
-              value={historyHours}
-              onChange={(value) => setHistoryHours(Number(value))}
-              options={[
-                { label: '1h', value: 1 },
-                { label: '6h', value: 6 },
-                { label: '24h', value: 24 },
-              ]}
-            />
-          }
-        >
-          {chartData.length ? (
-            <div style={{ width: '100%', height: 320 }}>
-              <ResponsiveContainer>
-                <AreaChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(15, 23, 42, 0.08)" />
-                  <XAxis dataKey="time" minTickGap={24} />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Area type="monotone" dataKey="cpu" stroke="#0f766e" fill="rgba(15, 118, 110, 0.16)" name="CPU %" />
-                  <Area type="monotone" dataKey="memory" stroke="#0891b2" fill="rgba(8, 145, 178, 0.16)" name="内存 %" />
-                  <Area type="monotone" dataKey="disk" stroke="#ca8a04" fill="rgba(202, 138, 4, 0.16)" name="磁盘 %" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <Empty description="当前时间窗口内还没有历史样本" />
-          )}
-        </Card>
-
-        <Card title="主机画像">
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label="IP 地址">{data.address}</Descriptions.Item>
-            <Descriptions.Item label="连接模式">{data.connection_mode}</Descriptions.Item>
-            <Descriptions.Item label="操作系统">{`${data.os_type ?? 'unknown'} ${data.os_version ?? ''}`.trim()}</Descriptions.Item>
-            <Descriptions.Item label="内核版本">{data.kernel_version ?? 'unknown'}</Descriptions.Item>
-            <Descriptions.Item label="包管理器">{data.package_manager ?? 'unknown'}</Descriptions.Item>
-            <Descriptions.Item label="Agent URL">{data.agent_url ?? '未配置'}</Descriptions.Item>
-            <Descriptions.Item label="最近画像时间">{formatTime(data.last_profiled_at)}</Descriptions.Item>
-            <Descriptions.Item label="最近在线时间">{formatTime(data.last_seen_at)}</Descriptions.Item>
-          </Descriptions>
-
-          <div className="inline-stats">
-            <div className="inline-stats__item">
-              <Typography.Text type="secondary">服务总数</Typography.Text>
-              <Typography.Title level={4}>{services.length}</Typography.Title>
-            </div>
-            <div className="inline-stats__item">
-              <Typography.Text type="secondary">运行中服务</Typography.Text>
-              <Typography.Title level={4}>{runningServices}</Typography.Title>
-            </div>
-            <div className="inline-stats__item">
-              <Typography.Text type="secondary">异常服务</Typography.Text>
-              <Typography.Title level={4}>{degradedServices}</Typography.Title>
-            </div>
-            <div className="inline-stats__item">
-              <Typography.Text type="secondary">暴露端口服务</Typography.Text>
-              <Typography.Title level={4}>{exposedServices}</Typography.Title>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      <div className="detail-grid">
-        <Card title="已发现服务">
-          <Table
-            rowKey="id"
-            columns={serviceColumns}
-            dataSource={services}
-            size="small"
-            pagination={{ pageSize: 8 }}
-            locale={{ emptyText: '还没有服务发现结果' }}
-          />
-        </Card>
-
-        <Card title="高占用进程">
-          <Table
-            rowKey={(item) => `${item.pid}-${item.command}`}
-            columns={processColumns}
-            dataSource={topProcesses}
-            size="small"
-            pagination={false}
-            locale={{ emptyText: '当前没有进程样本' }}
-          />
-        </Card>
-      </div>
-
-      <Card title="近期 AI 操作记录">
-        <Table
-          rowKey="id"
-          size="small"
-          dataSource={relatedTasks}
-          pagination={false}
-          locale={{ emptyText: '当前主机暂无近期 AI 任务记录' }}
-          columns={[
-            { title: '任务', dataIndex: 'title' },
-            { title: '目标', dataIndex: 'goal' },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              render: (value: string) => <Tag color={getTaskStatusColor(value)}>{value}</Tag>,
-            },
-            {
-              title: '创建时间',
-              dataIndex: 'created_at',
-              render: (value: string) => formatTime(value),
-            },
+      <div className="page-shell__header">
+        <Breadcrumb
+          items={[
+            { title: 'Dashboard' },
+            { title: '主机与服务' },
+            { title: data.name },
           ]}
         />
-      </Card>
+      </div>
+
+      <div className="page-shell__body">
+        <Card className="host-hero panel-card resizable-card">
+          <div className="panel-card__content">
+            <div className="host-hero__top">
+              <div>
+                <div className="page-kicker">Host detail</div>
+                <h1 className="page-title">{data.name}</h1>
+                <p className="page-subtitle">
+                  {data.address} · {data.os_type ?? 'unknown'} {data.os_version ?? ''} · 最近采样 {formatTime(monitoringSummary?.sampled_at)}
+                </p>
+                <Space wrap style={{ marginTop: 12 }}>
+                  <Tag color={data.status === 'online' || data.status === 'registered' ? 'green' : 'red'}>{data.status}</Tag>
+                  <Tag color="cyan">{data.connection_mode}</Tag>
+                  <Tag color="blue">{data.environment}</Tag>
+                  <Tag color={cpuPressure.color}>CPU {cpuPressure.text}</Tag>
+                  <Tag color={memoryPressure.color}>内存 {memoryPressure.text}</Tag>
+                  <Tag color={diskPressure.color}>磁盘 {diskPressure.text}</Tag>
+                </Space>
+              </div>
+              <Space wrap>
+                <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/hosts')}>
+                  返回主机列表
+                </Button>
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => navigate('/tasks', { state: { selectedHosts: [hostIdNumber] } })}
+                >
+                  去任务中心
+                </Button>
+                <Button icon={<ReloadOutlined />} loading={profileMutation.isPending} onClick={() => profileMutation.mutate()}>
+                  刷新画像
+                </Button>
+                <Button icon={<FundOutlined />} loading={metricsMutation.isPending} onClick={() => metricsMutation.mutate()}>
+                  重新采集主机指标
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<DeploymentUnitOutlined />}
+                  loading={discoverMutation.isPending}
+                  onClick={() => discoverMutation.mutate()}
+                >
+                  重新扫描服务暴露面
+                </Button>
+              </Space>
+            </div>
+
+            <Card type="inner" className="panel-subcard resizable-subcard" title="资源快照">
+              <div className="metric-ribbon">
+                <div className="metric-ribbon__item">
+                  <Typography.Text type="secondary">CPU 使用率</Typography.Text>
+                  <Statistic title={null} value={cpuValue ?? 'N/A'} suffix={cpuValue === null ? '' : '%'} />
+                  {cpuValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={cpuValue} strokeColor="#0f766e" showInfo={false} />}
+                </div>
+                <div className="metric-ribbon__item">
+                  <Typography.Text type="secondary">内存使用率</Typography.Text>
+                  <Statistic title={null} value={memoryValue ?? 'N/A'} suffix={memoryValue === null ? '' : '%'} />
+                  {memoryValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={memoryValue} strokeColor="#0891b2" showInfo={false} />}
+                </div>
+                <div className="metric-ribbon__item">
+                  <Typography.Text type="secondary">根分区使用率</Typography.Text>
+                  <Statistic title={null} value={diskValue ?? 'N/A'} suffix={diskValue === null ? '' : '%'} />
+                  {diskValue === null ? <Typography.Text type="secondary">暂无采样</Typography.Text> : <Progress percent={diskValue} strokeColor="#ca8a04" showInfo={false} />}
+                </div>
+                <div className="metric-ribbon__item">
+                  <Typography.Text type="secondary">Load 1m</Typography.Text>
+                  <Statistic
+                    title={null}
+                    value={monitoringValues.load1 ?? 'N/A'}
+                    formatter={(value) => (typeof value === 'number' ? value.toFixed(2) : value)}
+                  />
+                  <Typography.Text type="secondary">在线采样 {monitoringValues.up ? '正常' : '异常'}</Typography.Text>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </Card>
+
+        <Alert
+          type={diagnosisType}
+          message={diagnosisTitle}
+          description={
+            <div>
+              {diagnosisLines.map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+            </div>
+          }
+          showIcon
+        />
+
+        <Card className="panel-card resizable-card" title="观测与画像">
+          <div className="panel-card__content">
+            <div className="panel-subgrid panel-subgrid--2">
+              <Card
+                type="inner"
+                className="panel-subcard resizable-subcard"
+                title="资源趋势"
+                extra={
+                  <Segmented
+                    size="small"
+                    value={historyHours}
+                    onChange={(value) => setHistoryHours(Number(value))}
+                    options={[
+                      { label: '1h', value: 1 },
+                      { label: '6h', value: 6 },
+                      { label: '24h', value: 24 },
+                    ]}
+                  />
+                }
+              >
+                <div className="panel-subcard__content">
+                  {chartData.length ? (
+                    <div style={{ width: '100%', height: 320 }}>
+                      <ResponsiveContainer>
+                        <AreaChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(15, 23, 42, 0.08)" />
+                          <XAxis dataKey="time" minTickGap={24} />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Area type="monotone" dataKey="cpu" stroke="#0f766e" fill="rgba(15, 118, 110, 0.16)" name="CPU %" />
+                          <Area type="monotone" dataKey="memory" stroke="#0891b2" fill="rgba(8, 145, 178, 0.16)" name="内存 %" />
+                          <Area type="monotone" dataKey="disk" stroke="#ca8a04" fill="rgba(202, 138, 4, 0.16)" name="磁盘 %" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <Empty description="当前时间窗口内还没有历史样本" />
+                  )}
+                </div>
+              </Card>
+
+              <Card type="inner" className="panel-subcard resizable-subcard" title="主机画像">
+                <div className="panel-subcard__content">
+                  <Descriptions column={1} size="small" bordered>
+                    <Descriptions.Item label="IP 地址">{data.address}</Descriptions.Item>
+                    <Descriptions.Item label="连接模式">{data.connection_mode}</Descriptions.Item>
+                    <Descriptions.Item label="操作系统">{`${data.os_type ?? 'unknown'} ${data.os_version ?? ''}`.trim()}</Descriptions.Item>
+                    <Descriptions.Item label="内核版本">{data.kernel_version ?? 'unknown'}</Descriptions.Item>
+                    <Descriptions.Item label="包管理器">{data.package_manager ?? 'unknown'}</Descriptions.Item>
+                    <Descriptions.Item label="Agent URL">{data.agent_url ?? '未配置'}</Descriptions.Item>
+                    <Descriptions.Item label="最近画像时间">{formatTime(data.last_profiled_at)}</Descriptions.Item>
+                    <Descriptions.Item label="最近在线时间">{formatTime(data.last_seen_at)}</Descriptions.Item>
+                  </Descriptions>
+
+                  <div className="inline-stats">
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">服务总数</Typography.Text>
+                      <Typography.Title level={4}>{services.length}</Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">运行中服务</Typography.Text>
+                      <Typography.Title level={4}>{runningServices}</Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">异常服务</Typography.Text>
+                      <Typography.Title level={4}>{degradedServices}</Typography.Title>
+                    </div>
+                    <div className="inline-stats__item">
+                      <Typography.Text type="secondary">暴露端口服务</Typography.Text>
+                      <Typography.Title level={4}>{exposedServices}</Typography.Title>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="panel-card resizable-card" title="服务与进程">
+          <div className="panel-card__content">
+            <div className="panel-subgrid panel-subgrid--2">
+              <Card type="inner" className="panel-subcard resizable-subcard" title="已发现服务">
+                <div className="panel-subcard__content">
+                  <div className="table-scroll">
+                    <Table
+                      rowKey="id"
+                      columns={serviceColumns}
+                      dataSource={services}
+                      size="small"
+                      pagination={{ pageSize: 8 }}
+                      locale={{ emptyText: '还没有服务发现结果' }}
+                    />
+                  </div>
+                </div>
+              </Card>
+
+              <Card type="inner" className="panel-subcard resizable-subcard" title="高占用进程">
+                <div className="panel-subcard__content">
+                  <div className="table-scroll">
+                    <Table
+                      rowKey={(item) => `${item.pid}-${item.command}`}
+                      columns={processColumns}
+                      dataSource={topProcesses}
+                      size="small"
+                      pagination={false}
+                      locale={{ emptyText: '当前没有进程样本' }}
+                    />
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="panel-card resizable-card" title="近期 AI 操作记录">
+          <div className="panel-card__content">
+            <Card type="inner" className="panel-subcard resizable-subcard" title="任务记录">
+              <div className="panel-subcard__content">
+                <div className="table-scroll">
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    dataSource={relatedTasks}
+                    pagination={false}
+                    locale={{ emptyText: '当前主机暂无近期 AI 任务记录' }}
+                    columns={[
+                      { title: '任务', dataIndex: 'title' },
+                      { title: '目标', dataIndex: 'goal' },
+                      {
+                        title: '状态',
+                        dataIndex: 'status',
+                        render: (value: string) => <Tag color={getTaskStatusColor(value)}>{value}</Tag>,
+                      },
+                      {
+                        title: '创建时间',
+                        dataIndex: 'created_at',
+                        render: (value: string) => formatTime(value),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+            </Card>
+          </div>
+        </Card>
+      </div>
     </div>
   )
 }
