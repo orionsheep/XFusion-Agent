@@ -176,16 +176,16 @@ function FleetMonitorCard({ host, onOpen }: { host: any; onOpen: (hostId: number
         </Space>
       </div>
 
-      <div className="fleet-monitor-card__stats">
-        <div className="fleet-inline-stat">
+      <div className="fleet-monitor-card__statbar">
+        <div className="fleet-stat-pill">
           <span>运行时长</span>
           <strong>{system.uptimeText}</strong>
         </div>
-        <div className="fleet-inline-stat">
+        <div className="fleet-stat-pill">
           <span>负载</span>
           <strong>{system.loadText}</strong>
         </div>
-        <div className="fleet-inline-stat">
+        <div className="fleet-stat-pill">
           <span>最近采样</span>
           <strong>{system.sampledAtText}</strong>
         </div>
@@ -225,7 +225,7 @@ function FleetMonitorCard({ host, onOpen }: { host: any; onOpen: (hostId: number
             <span>CPU / MEM</span>
           </div>
           {(system.topProcesses.length ? system.topProcesses : [{ command: '暂无数据', cpu_percent: '-', mem_percent: '-', pid: '-' }])
-            .slice(0, 4)
+            .slice(0, 3)
             .map((item: any, index: number) => (
               <div className="fleet-data-table__row" key={`${host.id}-proc-${item.pid ?? index}`}>
                 <div>
@@ -246,7 +246,7 @@ function FleetMonitorCard({ host, onOpen }: { host: any; onOpen: (hostId: number
             <span>占用</span>
           </div>
           {(system.filesystems.length ? system.filesystems : [{ mount: '/', percent: host.values.root_disk_percent, availableBytes: null, sizeBytes: null }])
-            .slice(0, 5)
+            .slice(0, 3)
             .map((item: any, index: number) => (
               <div className="fleet-data-table__row" key={`${host.id}-fs-${item.mount ?? index}`}>
                 <div>
@@ -475,23 +475,24 @@ export function DashboardPage() {
                       <h2 className="page-title">主机态势工作台</h2>
                       <p className="page-subtitle">以每台主机为单位展开系统状态、进程压力和文件系统容量，快速定位高风险节点。</p>
                     </div>
-                    <div className="fleet-monitor-hero__stats">
-                      <div className="fleet-monitor-chip">
-                        <span>在线率</span>
-                        <strong>{onlineRate}%</strong>
-                      </div>
-                      <div className="fleet-monitor-chip">
-                        <span>风险主机</span>
-                        <strong>{riskHosts.length}</strong>
-                      </div>
-                      <div className="fleet-monitor-chip">
-                        <span>平均 CPU</span>
-                        <strong>{avgCpu}%</strong>
-                      </div>
-                      <div className="fleet-monitor-chip">
-                        <span>热节点</span>
-                        <strong>{hottestHost?.name ?? 'N/A'}</strong>
-                      </div>
+                  </div>
+
+                  <div className="fleet-monitor-hero__stats">
+                    <div className="fleet-monitor-chip">
+                      <span>在线率</span>
+                      <strong>{onlineRate}%</strong>
+                    </div>
+                    <div className="fleet-monitor-chip">
+                      <span>风险主机</span>
+                      <strong>{riskHosts.length}</strong>
+                    </div>
+                    <div className="fleet-monitor-chip">
+                      <span>平均 CPU</span>
+                      <strong>{avgCpu}%</strong>
+                    </div>
+                    <div className="fleet-monitor-chip">
+                      <span>热节点</span>
+                      <strong>{hottestHost?.name ?? 'N/A'}</strong>
                     </div>
                   </div>
 
