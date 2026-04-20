@@ -184,10 +184,11 @@ class OpenAICompatiblePlugin:
 
             # Execute each tool call
             for tc in assistant_msg["tool_calls"]:
+                args_str = tc["function"].get("arguments") or "{}"
                 call = ToolCall(
                     id=tc["id"],
                     name=tc["function"]["name"],
-                    arguments=json.loads(tc["function"]["arguments"]),
+                    arguments=json.loads(args_str),
                 )
                 all_tool_calls.append(call)
                 result = await tool_executor(call.name, call.arguments)
@@ -490,19 +491,25 @@ class OpenRouterPlugin(OpenAICompatiblePlugin):
 
 
 class PerplexityPlugin(OpenAICompatiblePlugin):
-    """Perplexity — 联网推理"""
+    """Perplexity — 联网推理（不支持 tool_calls）"""
     provider_name = "perplexity"
     _BASE_URL = "https://api.perplexity.ai/chat/completions"
     _API_KEY_ENV = "PERPLEXITY_API_KEY"
     _ALIASES = {"sonar": "sonar-pro"}
 
+    async def run_agent_loop(self, **_: Any) -> AgentLoopResult:
+        raise NotImplementedError("Perplexity Sonar does not support OpenAI tool_calls protocol")
+
 
 class CoherePlugin(OpenAICompatiblePlugin):
-    """Cohere Command"""
+    """Cohere Command（不支持 tool_calls via compatibility endpoint）"""
     provider_name = "cohere"
     _BASE_URL = "https://api.cohere.ai/compatibility/v1/chat/completions"
     _API_KEY_ENV = "COHERE_API_KEY"
     _ALIASES = {"command": "command-r-plus"}
+
+    async def run_agent_loop(self, **_: Any) -> AgentLoopResult:
+        raise NotImplementedError("Cohere compatibility endpoint does not support OpenAI tool_calls protocol")
 
 
 # ===========================================================================
@@ -752,7 +759,7 @@ class GeminiPlugin:
             contents.append({"role": "model", "parts": parts})
 
             func_calls = [p for p in parts if "functionCall" in p]
-            if not func_calls or finish_reason == "STOP":
+            if not func_calls:
                 text = " ".join(p.get("text", "") for p in parts if "text" in p)
                 return AgentLoopResult(
                     final_text=text,
@@ -762,10 +769,10 @@ class GeminiPlugin:
 
             # Execute function calls
             responses: list[dict[str, Any]] = []
-            for part in func_calls:
+            for i, part in enumerate(func_calls):
                 fc = part["functionCall"]
                 call = ToolCall(
-                    id=f"{fc['name']}_{turn}",
+                    id=f"{fc['name']}_{turn}_{i}",
                     name=fc["name"],
                     arguments=fc.get("args", {}),
                 )
@@ -782,6 +789,8 @@ class GeminiPlugin:
 
         # Hit max_turns
         body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens}}
+        if system:
+            body["system_instruction"] = {"parts": [{"text": system}]}
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{url_base}:generateContent?key={api_key}",
@@ -872,11 +881,10 @@ class ProviderRegistry:
         plugin = self.resolve(provider)
 
         if not hasattr(plugin, "run_agent_loop"):
+            supported = sorted(n for n, p in self._plugins.items() if hasattr(p, "run_agent_loop"))
             raise NotImplementedError(
                 f"Provider '{provider}' does not support agent loop. "
-                f"Providers with agent loop: anthropic, zhipu, openai, gemini, "
-                f"deepseek, mistral, groq, together, openrouter, qwen, moonshot, "
-                f"siliconflow, yi, minimax, baichuan, hunyuan, spark, ollama"
+                f"Providers with agent loop: {', '.join(supported)}"
             )
 
         return await plugin.run_agent_loop(
