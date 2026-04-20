@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Awaitable, Protocol, runtime_checkable
 
 import httpx
 
@@ -22,6 +23,27 @@ class LLMResponse:
     text: str
     provider: str
     model_id: str
+
+
+@dataclass
+class ToolDefinition:
+    name: str
+    description: str
+    parameters: dict[str, Any]   # JSON Schema object
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class AgentLoopResult:
+    final_text: str
+    turns: int
+    tool_calls_made: list[ToolCall] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -94,6 +116,104 @@ class OpenAICompatiblePlugin:
             text = data["choices"][0]["message"]["content"]
             return LLMResponse(text=text, provider=self.provider_name, model_id=model)
 
+    async def run_agent_loop(
+        self,
+        *,
+        model_id: str,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_turns: int = 10,
+        max_tokens: int = 4096,
+        timeout: int = 60,
+    ) -> AgentLoopResult:
+        api_key = self._get_api_key()
+        model = self.normalize_model_id(model_id)
+        all_tool_calls: list[ToolCall] = []
+
+        # OpenAI tool format
+        tools_payload = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                },
+            }
+            for t in tools
+        ]
+
+        # Build mutable message history (OpenAI dict format)
+        history: list[dict[str, Any]] = [
+            {"role": m.role, "content": m.content} for m in messages
+        ]
+
+        for turn in range(max_turns):
+            body: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": history,
+                "tools": tools_payload,
+                "tool_choice": "auto",
+            }
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    self._BASE_URL,
+                    headers={**self._auth_header(api_key), "content-type": "application/json"},
+                    json=body,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            assistant_msg = choice["message"]
+
+            # Add assistant message to history
+            history.append(assistant_msg)
+
+            if finish_reason != "tool_calls" or not assistant_msg.get("tool_calls"):
+                # Model is done
+                return AgentLoopResult(
+                    final_text=assistant_msg.get("content") or "",
+                    turns=turn + 1,
+                    tool_calls_made=all_tool_calls,
+                )
+
+            # Execute each tool call
+            for tc in assistant_msg["tool_calls"]:
+                call = ToolCall(
+                    id=tc["id"],
+                    name=tc["function"]["name"],
+                    arguments=json.loads(tc["function"]["arguments"]),
+                )
+                all_tool_calls.append(call)
+                result = await tool_executor(call.name, call.arguments)
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result,
+                })
+
+        # Hit max_turns — ask model to summarize
+        history.append({"role": "user", "content": "Please summarize what was accomplished."})
+        body = {"model": model, "max_tokens": max_tokens, "messages": history}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                self._BASE_URL,
+                headers={**self._auth_header(api_key), "content-type": "application/json"},
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return AgentLoopResult(
+            final_text=data["choices"][0]["message"].get("content") or "",
+            turns=max_turns,
+            tool_calls_made=all_tool_calls,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Anthropic-native base plugin
@@ -147,6 +267,107 @@ class AnthropicNativePlugin:
             data = resp.json()
             text = data["content"][0]["text"]
             return LLMResponse(text=text, provider=self.provider_name, model_id=model)
+
+    async def run_agent_loop(
+        self,
+        *,
+        model_id: str,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_turns: int = 10,
+        max_tokens: int = 4096,
+        timeout: int = 60,
+    ) -> AgentLoopResult:
+        api_key = os.environ[self._API_KEY_ENV]
+        model = self.normalize_model_id(model_id)
+        all_tool_calls: list[ToolCall] = []
+
+        # Anthropic tool format
+        tools_payload = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters,
+            }
+            for t in tools
+        ]
+
+        system = next((m.content for m in messages if m.role == "system"), "")
+        history: list[dict[str, Any]] = [
+            {"role": m.role, "content": m.content}
+            for m in messages if m.role != "system"
+        ]
+
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": self._VERSION,
+            "content-type": "application/json",
+        }
+
+        for turn in range(max_turns):
+            body: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": history,
+                "tools": tools_payload,
+            }
+            if system:
+                body["system"] = system
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(self._BASE_URL, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+
+            stop_reason = data.get("stop_reason")
+            content_blocks = data.get("content", [])
+
+            # Add assistant turn to history
+            history.append({"role": "assistant", "content": content_blocks})
+
+            if stop_reason != "tool_use":
+                text = " ".join(
+                    b.get("text", "") for b in content_blocks if b.get("type") == "text"
+                )
+                return AgentLoopResult(
+                    final_text=text,
+                    turns=turn + 1,
+                    tool_calls_made=all_tool_calls,
+                )
+
+            # Execute tool_use blocks
+            tool_results: list[dict[str, Any]] = []
+            for block in content_blocks:
+                if block.get("type") != "tool_use":
+                    continue
+                call = ToolCall(
+                    id=block["id"],
+                    name=block["name"],
+                    arguments=block.get("input", {}),
+                )
+                all_tool_calls.append(call)
+                result = await tool_executor(call.name, call.arguments)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": call.id,
+                    "content": result,
+                })
+
+            history.append({"role": "user", "content": tool_results})
+
+        # Hit max_turns
+        body = {"model": model, "max_tokens": max_tokens, "messages": history}
+        if system:
+            body["system"] = system
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(self._BASE_URL, headers=headers, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        text = " ".join(
+            b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
+        )
+        return AgentLoopResult(final_text=text, turns=max_turns, tool_calls_made=all_tool_calls)
 
 
 # ===========================================================================
@@ -474,6 +695,105 @@ class GeminiPlugin:
             text = data["candidates"][0]["content"]["parts"][0]["text"]
             return LLMResponse(text=text, provider="gemini", model_id=model)
 
+    async def run_agent_loop(
+        self,
+        *,
+        model_id: str,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_turns: int = 10,
+        max_tokens: int = 4096,
+        timeout: int = 60,
+    ) -> AgentLoopResult:
+        api_key = os.environ["GEMINI_API_KEY"]
+        model = self.normalize_model_id(model_id)
+        all_tool_calls: list[ToolCall] = []
+
+        tools_payload = [{
+            "function_declarations": [
+                {"name": t.name, "description": t.description, "parameters": t.parameters}
+                for t in tools
+            ]
+        }]
+
+        system = next((m.content for m in messages if m.role == "system"), "")
+        contents: list[dict[str, Any]] = [
+            {"role": "user" if m.role == "user" else "model",
+             "parts": [{"text": m.content}]}
+            for m in messages if m.role != "system"
+        ]
+
+        url_base = f"{self._BASE}/{model}"
+
+        for turn in range(max_turns):
+            body: dict[str, Any] = {
+                "contents": contents,
+                "tools": tools_payload,
+                "generationConfig": {"maxOutputTokens": max_tokens},
+            }
+            if system:
+                body["system_instruction"] = {"parts": [{"text": system}]}
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{url_base}:generateContent?key={api_key}",
+                    headers={"content-type": "application/json"},
+                    json=body,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            candidate = data["candidates"][0]
+            parts = candidate["content"]["parts"]
+            finish_reason = candidate.get("finishReason", "")
+
+            # Add model turn to history
+            contents.append({"role": "model", "parts": parts})
+
+            func_calls = [p for p in parts if "functionCall" in p]
+            if not func_calls or finish_reason == "STOP":
+                text = " ".join(p.get("text", "") for p in parts if "text" in p)
+                return AgentLoopResult(
+                    final_text=text,
+                    turns=turn + 1,
+                    tool_calls_made=all_tool_calls,
+                )
+
+            # Execute function calls
+            responses: list[dict[str, Any]] = []
+            for part in func_calls:
+                fc = part["functionCall"]
+                call = ToolCall(
+                    id=f"{fc['name']}_{turn}",
+                    name=fc["name"],
+                    arguments=fc.get("args", {}),
+                )
+                all_tool_calls.append(call)
+                result = await tool_executor(call.name, call.arguments)
+                responses.append({
+                    "functionResponse": {
+                        "name": fc["name"],
+                        "response": {"output": result},
+                    }
+                })
+
+            contents.append({"role": "user", "parts": responses})
+
+        # Hit max_turns
+        body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens}}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{url_base}:generateContent?key={api_key}",
+                headers={"content-type": "application/json"},
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        parts = data["candidates"][0]["content"]["parts"]
+        text = " ".join(p.get("text", "") for p in parts if "text" in p)
+        return AgentLoopResult(final_text=text, turns=max_turns, tool_calls_made=all_tool_calls)
+
 
 # ===========================================================================
 # ProviderRegistry
@@ -526,6 +846,48 @@ class ProviderRegistry:
 
     def list_providers(self) -> list[str]:
         return sorted(self._plugins)
+
+    async def agent_loop(
+        self,
+        *,
+        model: str,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]],
+        max_turns: int = 10,
+        max_tokens: int = 4096,
+        timeout: int = 60,
+    ) -> AgentLoopResult:
+        """
+        通用 Agent Loop：支持任意 provider / 任意 Function Calling 格式。
+
+        model:         "provider/model-id"
+        tools:         工具定义列表
+        tool_executor: async (tool_name, arguments) -> result_str
+                       调用方负责实际执行（SSH、本地命令等）
+        """
+        if "/" not in model:
+            raise ValueError(f"XFUSION_MODEL must be 'provider/model-id' format, got: '{model}'")
+        provider, model_id = model.split("/", 1)
+        plugin = self.resolve(provider)
+
+        if not hasattr(plugin, "run_agent_loop"):
+            raise NotImplementedError(
+                f"Provider '{provider}' does not support agent loop. "
+                f"Providers with agent loop: anthropic, zhipu, openai, gemini, "
+                f"deepseek, mistral, groq, together, openrouter, qwen, moonshot, "
+                f"siliconflow, yi, minimax, baichuan, hunyuan, spark, ollama"
+            )
+
+        return await plugin.run_agent_loop(
+            model_id=model_id,
+            messages=messages,
+            tools=tools,
+            tool_executor=tool_executor,
+            max_turns=max_turns,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
 
     async def chat_completion(
         self,
