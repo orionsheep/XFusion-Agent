@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         default=f"sqlite:///{(ROOT_DIR / 'backend' / 'xfusion.db').as_posix()}"
     )
     claude_enabled: bool = True
-    claude_model: str = "sonnet"
+    model: str = "anthropic/claude-sonnet-4-6"
     agent_shared_secret: str = "change-me-agent-secret"
     token_expire_minutes: int = 60 * 12
     frontend_origin: str = "http://localhost:5173"

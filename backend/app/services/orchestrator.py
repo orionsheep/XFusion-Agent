@@ -8,7 +8,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from .llm_router import LLMMessage, registry
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -50,11 +50,6 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
         return None
 
 
-def _has_claude_credentials() -> bool:
-    return any(
-        os.getenv(name)
-        for name in ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]
-    )
 
 
 def _safe_path(path: str | None) -> str:
@@ -134,33 +129,18 @@ class ClaudePlanner:
         max_turns: int = 2,
         timeout_seconds: int = 20,
     ) -> dict[str, Any] | None:
-        if not settings.claude_enabled or not _has_claude_credentials():
+        if not settings.claude_enabled:
             return None
-
-        async def _run() -> dict[str, Any] | None:
-            last_text = ""
-            async for message in query(
-                prompt=prompt,
-                options=ClaudeAgentOptions(
-                    model=settings.claude_model,
-                    system_prompt=system_prompt,
-                    permission_mode="dontAsk",
-                    max_turns=max_turns,
-                    cwd=".",
-                ),
-            ):
-                result = getattr(message, "result", None)
-                if isinstance(result, str):
-                    last_text = result
-                content = getattr(message, "content", None)
-                if isinstance(content, list):
-                    texts = [getattr(block, "text", "") for block in content if getattr(block, "text", "")]
-                    if texts:
-                        last_text = "\n".join(texts)
-            return _extract_json_payload(last_text)
-
         try:
-            return await asyncio.wait_for(_run(), timeout=timeout_seconds)
+            text = await registry.chat_completion(
+                model=settings.model,
+                messages=[
+                    LLMMessage(role="system", content=system_prompt),
+                    LLMMessage(role="user", content=prompt),
+                ],
+                timeout=timeout_seconds,
+            )
+            return _extract_json_payload(text)
         except Exception:
             return None
 
@@ -218,7 +198,7 @@ class ClaudePlanner:
                 criteria=result.get("criteria") if isinstance(result.get("criteria"), list) else [],
                 parameters=result.get("parameters") if isinstance(result.get("parameters"), dict) else {},
                 explanation=str(result.get("explanation") or ""),
-                planning_source="claude",
+                planning_source=settings.model.split("/")[0],
             )
         except Exception:
             return None

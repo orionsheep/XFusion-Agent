@@ -11,7 +11,7 @@ from typing import Any
 
 import asyncssh
 import httpx
-from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
+from .llm_router import LLMMessage, registry
 from fastapi import HTTPException, status
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import delete
@@ -841,36 +841,26 @@ class IntentPlan:
 class ClaudePlanner:
     @staticmethod
     async def maybe_summarize(prompt: str, context: dict[str, Any], session: Session) -> dict[str, Any] | None:
-        has_credentials = any(
-            os.getenv(name)
-            for name in ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]
-        )
-        if not settings.claude_enabled or not has_credentials:
+        if not settings.claude_enabled:
             return None
         try:
-            mcp_server = build_claude_tools(session)
-            async def _run_query() -> dict[str, Any] | None:
-                async for message in query(
-                    prompt=(
-                        "You are an operations planner. Convert the user request into JSON with "
-                        "keys summary, risk_hint, target_guess. Use available tools when useful. "
-                        f"User request: {prompt}\nContext: {json.dumps(context, ensure_ascii=False)}"
-                    ),
-                    options=ClaudeAgentOptions(
-                        system_prompt="Return concise JSON only.",
-                        model=settings.claude_model,
-                        permission_mode="plan",
-                        max_turns=1,
-                        mcp_servers={"xfusion": mcp_server},
-                        allowed_tools=["list_hosts", "get_dashboard_summary"],
-                    ),
-                ):
-                    if getattr(message, "type", None) == "result":
-                        text = getattr(message, "result", "")
-                        return {"raw": text}
-                return None
-
-            return await asyncio.wait_for(_run_query(), timeout=8)
+            system_prompt = (
+                "You are an operations planner. Convert the user request into JSON with "
+                "keys summary, risk_hint, target_guess. Return concise JSON only."
+            )
+            user_content = (
+                f"User request: {prompt}\n"
+                f"Context: {json.dumps(context, ensure_ascii=False)}"
+            )
+            text = await registry.chat_completion(
+                model=settings.model,
+                messages=[
+                    LLMMessage(role="system", content=system_prompt),
+                    LLMMessage(role="user", content=user_content),
+                ],
+                timeout=8,
+            )
+            return {"raw": text}
         except Exception:
             return None
 
@@ -1160,28 +1150,3 @@ class DashboardService:
         }
 
 
-def build_claude_tools(session: Session):
-    @tool("list_hosts", "List all managed hosts", {})
-    async def list_hosts_tool(_: dict[str, Any]) -> dict[str, Any]:
-        hosts = HostRepository.list_hosts(session)
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(
-                        [
-                            {"id": host.id, "name": host.name, "address": host.address, "status": host.status}
-                            for host in hosts
-                        ],
-                        ensure_ascii=False,
-                    ),
-                }
-            ]
-        }
-
-    @tool("get_dashboard_summary", "Get dashboard summary", {})
-    async def dashboard_tool(_: dict[str, Any]) -> dict[str, Any]:
-        summary = DashboardService.overview(session)
-        return {"content": [{"type": "text", "text": json.dumps(summary, ensure_ascii=False)}]}
-
-    return create_sdk_mcp_server("xfusion-control-plane", tools=[list_hosts_tool, dashboard_tool])
