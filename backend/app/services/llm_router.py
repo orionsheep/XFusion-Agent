@@ -43,25 +43,28 @@ class ProviderPlugin(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# AnthropicPlugin
+# OpenAI-compatible base plugin
+# Most providers speak OpenAI /v1/chat/completions format.
+# Subclass this and set provider_name, _BASE_URL, _API_KEY_ENV.
 # ---------------------------------------------------------------------------
 
-class AnthropicPlugin:
-    provider_name = "anthropic"
-    _BASE_URL = "https://api.anthropic.com/v1/messages"
-    _VERSION = "2023-06-01"
-
-    _ALIASES: dict[str, str] = {
-        "opus":   "claude-opus-4-7",
-        "sonnet": "claude-sonnet-4-6",
-        "haiku":  "claude-haiku-4-5-20251001",
-    }
+class OpenAICompatiblePlugin:
+    provider_name: str = ""
+    _BASE_URL: str = ""
+    _API_KEY_ENV: str = ""
+    _ALIASES: dict[str, str] = {}
 
     def normalize_model_id(self, model_id: str) -> str:
         return self._ALIASES.get(model_id, model_id)
 
     def is_available(self) -> bool:
-        return bool(os.getenv("ANTHROPIC_API_KEY"))
+        return bool(os.getenv(self._API_KEY_ENV)) if self._API_KEY_ENV else True
+
+    def _get_api_key(self) -> str:
+        return os.environ[self._API_KEY_ENV]
+
+    def _auth_header(self, api_key: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {api_key}"}
 
     async def chat_completion(
         self,
@@ -71,163 +74,44 @@ class AnthropicPlugin:
         max_tokens: int = 4096,
         timeout: int = 30,
     ) -> LLMResponse:
-        api_key = os.environ["ANTHROPIC_API_KEY"]
+        api_key = self._get_api_key()
         model = self.normalize_model_id(model_id)
-
-        system = next((m.content for m in messages if m.role == "system"), "")
-        user_messages = [
-            {"role": m.role, "content": m.content}
-            for m in messages if m.role != "system"
-        ]
 
         body: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "messages": user_messages,
-        }
-        if system:
-            body["system"] = system
-
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                self._BASE_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": self._VERSION,
-                    "content-type": "application/json",
-                },
-                json=body,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["content"][0]["text"]
-            return LLMResponse(text=text, provider="anthropic", model_id=model)
-
-
-# ---------------------------------------------------------------------------
-# ZhipuPlugin  (Anthropic-compatible endpoint)
-# ---------------------------------------------------------------------------
-
-class ZhipuPlugin:
-    provider_name = "zhipu"
-    _BASE_URL = "https://open.bigmodel.cn/api/anthropic/v1/messages"
-    _VERSION = "2023-06-01"
-
-    _ALIASES: dict[str, str] = {
-        "glm4":      "glm-4.7",
-        "glm4air":   "glm-4.5-air",
-        "glm4flash": "glm-4.5-flash",
-    }
-
-    def normalize_model_id(self, model_id: str) -> str:
-        return self._ALIASES.get(model_id, model_id)
-
-    def is_available(self) -> bool:
-        return bool(os.getenv("ZHIPU_API_KEY"))
-
-    async def chat_completion(
-        self,
-        *,
-        model_id: str,
-        messages: list[LLMMessage],
-        max_tokens: int = 4096,
-        timeout: int = 30,
-    ) -> LLMResponse:
-        api_key = os.environ["ZHIPU_API_KEY"]
-        model = self.normalize_model_id(model_id)
-
-        system = next((m.content for m in messages if m.role == "system"), "")
-        user_messages = [
-            {"role": m.role, "content": m.content}
-            for m in messages if m.role != "system"
-        ]
-
-        body: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": user_messages,
-        }
-        if system:
-            body["system"] = system
-
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                self._BASE_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": self._VERSION,
-                    "content-type": "application/json",
-                },
-                json=body,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["content"][0]["text"]
-            return LLMResponse(text=text, provider="zhipu", model_id=model)
-
-
-# ---------------------------------------------------------------------------
-# OpenAIPlugin
-# ---------------------------------------------------------------------------
-
-class OpenAIPlugin:
-    provider_name = "openai"
-    _BASE_URL = "https://api.openai.com/v1/chat/completions"
-
-    def normalize_model_id(self, model_id: str) -> str:
-        return model_id
-
-    def is_available(self) -> bool:
-        return bool(os.getenv("OPENAI_API_KEY"))
-
-    async def chat_completion(
-        self,
-        *,
-        model_id: str,
-        messages: list[LLMMessage],
-        max_tokens: int = 4096,
-        timeout: int = 30,
-    ) -> LLMResponse:
-        api_key = os.environ["OPENAI_API_KEY"]
-
-        body: dict[str, Any] = {
-            "model": model_id,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": m.role, "content": m.content} for m in messages
-            ],
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
         }
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 self._BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "content-type": "application/json",
-                },
+                headers={**self._auth_header(api_key), "content-type": "application/json"},
                 json=body,
             )
             resp.raise_for_status()
             data = resp.json()
             text = data["choices"][0]["message"]["content"]
-            return LLMResponse(text=text, provider="openai", model_id=model_id)
+            return LLMResponse(text=text, provider=self.provider_name, model_id=model)
 
 
 # ---------------------------------------------------------------------------
-# OllamaPlugin
+# Anthropic-native base plugin
+# Providers that expose the Anthropic /v1/messages format.
 # ---------------------------------------------------------------------------
 
-class OllamaPlugin:
-    provider_name = "ollama"
-
-    def __init__(self) -> None:
-        self._base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+class AnthropicNativePlugin:
+    provider_name: str = ""
+    _BASE_URL: str = ""
+    _API_KEY_ENV: str = ""
+    _VERSION: str = "2023-06-01"
+    _ALIASES: dict[str, str] = {}
 
     def normalize_model_id(self, model_id: str) -> str:
-        return model_id
+        return self._ALIASES.get(model_id, model_id)
 
     def is_available(self) -> bool:
-        return True  # 本地服务，无需 key
+        return bool(os.getenv(self._API_KEY_ENV))
 
     async def chat_completion(
         self,
@@ -235,39 +119,322 @@ class OllamaPlugin:
         model_id: str,
         messages: list[LLMMessage],
         max_tokens: int = 4096,
-        timeout: int = 60,
+        timeout: int = 30,
     ) -> LLMResponse:
-        body: dict[str, Any] = {
-            "model": model_id,
-            "messages": [
-                {"role": m.role, "content": m.content} for m in messages
-            ],
-            "stream": False,
-            "options": {"num_predict": max_tokens},
-        }
+        api_key = os.environ[self._API_KEY_ENV]
+        model = self.normalize_model_id(model_id)
+
+        system = next((m.content for m in messages if m.role == "system"), "")
+        user_messages = [
+            {"role": m.role, "content": m.content}
+            for m in messages if m.role != "system"
+        ]
+        body: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": user_messages}
+        if system:
+            body["system"] = system
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                f"{self._base_url}/api/chat",
+                self._BASE_URL,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": self._VERSION,
+                    "content-type": "application/json",
+                },
                 json=body,
             )
             resp.raise_for_status()
             data = resp.json()
-            text = data["message"]["content"]
-            return LLMResponse(text=text, provider="ollama", model_id=model_id)
+            text = data["content"][0]["text"]
+            return LLMResponse(text=text, provider=self.provider_name, model_id=model)
 
 
-# ---------------------------------------------------------------------------
-# GeminiPlugin
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Anthropic-native providers
+# ===========================================================================
+
+class AnthropicPlugin(AnthropicNativePlugin):
+    provider_name = "anthropic"
+    _BASE_URL = "https://api.anthropic.com/v1/messages"
+    _API_KEY_ENV = "ANTHROPIC_API_KEY"
+    _ALIASES = {
+        "opus":   "claude-opus-4-7",
+        "sonnet": "claude-sonnet-4-6",
+        "haiku":  "claude-haiku-4-5-20251001",
+    }
+
+
+class ZhipuPlugin(AnthropicNativePlugin):
+    """智谱 GLM — Anthropic 兼容端点"""
+    provider_name = "zhipu"
+    _BASE_URL = "https://open.bigmodel.cn/api/anthropic/v1/messages"
+    _API_KEY_ENV = "ZHIPU_API_KEY"
+    _ALIASES = {
+        "glm4":      "glm-4.7",
+        "glm4air":   "glm-4.5-air",
+        "glm4flash": "glm-4.5-flash",
+    }
+
+
+# ===========================================================================
+# OpenAI-compatible providers
+# ===========================================================================
+
+class OpenAIPlugin(OpenAICompatiblePlugin):
+    provider_name = "openai"
+    _BASE_URL = "https://api.openai.com/v1/chat/completions"
+    _API_KEY_ENV = "OPENAI_API_KEY"
+
+
+class DeepSeekPlugin(OpenAICompatiblePlugin):
+    """DeepSeek — 国内领先推理模型"""
+    provider_name = "deepseek"
+    _BASE_URL = "https://api.deepseek.com/v1/chat/completions"
+    _API_KEY_ENV = "DEEPSEEK_API_KEY"
+    _ALIASES = {"v3": "deepseek-chat", "r1": "deepseek-reasoner"}
+
+
+class MoonshotPlugin(OpenAICompatiblePlugin):
+    """Moonshot / Kimi — 月之暗面"""
+    provider_name = "moonshot"
+    _BASE_URL = "https://api.moonshot.cn/v1/chat/completions"
+    _API_KEY_ENV = "MOONSHOT_API_KEY"
+    _ALIASES = {"kimi": "moonshot-v1-8k"}
+
+
+class QwenPlugin(OpenAICompatiblePlugin):
+    """通义千问 — 阿里云 DashScope"""
+    provider_name = "qwen"
+    _BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    _API_KEY_ENV = "DASHSCOPE_API_KEY"
+    _ALIASES = {"max": "qwen-max", "plus": "qwen-plus", "turbo": "qwen-turbo"}
+
+
+class DoubaoPlugin(OpenAICompatiblePlugin):
+    """豆包 — 字节跳动火山引擎"""
+    provider_name = "doubao"
+    _BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    _API_KEY_ENV = "DOUBAO_API_KEY"
+
+
+class SiliconFlowPlugin(OpenAICompatiblePlugin):
+    """硅基流动 — 国内 OpenAI 兼容聚合"""
+    provider_name = "siliconflow"
+    _BASE_URL = "https://api.siliconflow.cn/v1/chat/completions"
+    _API_KEY_ENV = "SILICONFLOW_API_KEY"
+
+
+class YiPlugin(OpenAICompatiblePlugin):
+    """零一万物 Yi"""
+    provider_name = "yi"
+    _BASE_URL = "https://api.lingyiwanwu.com/v1/chat/completions"
+    _API_KEY_ENV = "YI_API_KEY"
+    _ALIASES = {"large": "yi-large", "medium": "yi-medium"}
+
+
+class MistralPlugin(OpenAICompatiblePlugin):
+    """Mistral AI"""
+    provider_name = "mistral"
+    _BASE_URL = "https://api.mistral.ai/v1/chat/completions"
+    _API_KEY_ENV = "MISTRAL_API_KEY"
+    _ALIASES = {"large": "mistral-large-latest", "small": "mistral-small-latest"}
+
+
+class GroqPlugin(OpenAICompatiblePlugin):
+    """Groq — 超快推理"""
+    provider_name = "groq"
+    _BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+    _API_KEY_ENV = "GROQ_API_KEY"
+    _ALIASES = {"llama3": "llama3-70b-8192", "mixtral": "mixtral-8x7b-32768"}
+
+
+class TogetherPlugin(OpenAICompatiblePlugin):
+    """Together AI — 开源模型托管"""
+    provider_name = "together"
+    _BASE_URL = "https://api.together.xyz/v1/chat/completions"
+    _API_KEY_ENV = "TOGETHER_API_KEY"
+
+
+class OpenRouterPlugin(OpenAICompatiblePlugin):
+    """OpenRouter — 统一多模型网关"""
+    provider_name = "openrouter"
+    _BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    _API_KEY_ENV = "OPENROUTER_API_KEY"
+
+    def _auth_header(self, api_key: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://xfusion-agent.local",
+        }
+
+
+class PerplexityPlugin(OpenAICompatiblePlugin):
+    """Perplexity — 联网推理"""
+    provider_name = "perplexity"
+    _BASE_URL = "https://api.perplexity.ai/chat/completions"
+    _API_KEY_ENV = "PERPLEXITY_API_KEY"
+    _ALIASES = {"sonar": "sonar-pro"}
+
+
+class CoherePlugin(OpenAICompatiblePlugin):
+    """Cohere Command"""
+    provider_name = "cohere"
+    _BASE_URL = "https://api.cohere.ai/compatibility/v1/chat/completions"
+    _API_KEY_ENV = "COHERE_API_KEY"
+    _ALIASES = {"command": "command-r-plus"}
+
+
+# ===========================================================================
+# Special providers
+# ===========================================================================
+
+class OllamaPlugin(OpenAICompatiblePlugin):
+    """Ollama — 本地模型，无需 API Key"""
+    provider_name = "ollama"
+    _API_KEY_ENV = ""
+
+    def __init__(self) -> None:
+        self._BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1/chat/completions"
+
+    def _get_api_key(self) -> str:
+        return "ollama"  # Ollama 接受任意字符串
+
+
+class WenxinPlugin:
+    """百度文心一言 — OAuth access_token 格式"""
+    provider_name = "wenxin"
+    _TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
+    _CHAT_URL = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/{model}"
+    _ALIASES: dict[str, str] = {
+        "4":      "completions_pro",
+        "turbo":  "eb-instant",
+        "speed":  "ernie_speed",
+    }
+
+    def normalize_model_id(self, model_id: str) -> str:
+        return self._ALIASES.get(model_id, model_id)
+
+    def is_available(self) -> bool:
+        return bool(os.getenv("WENXIN_API_KEY") and os.getenv("WENXIN_SECRET_KEY"))
+
+    async def _get_access_token(self, client: httpx.AsyncClient) -> str:
+        resp = await client.post(
+            self._TOKEN_URL,
+            params={
+                "grant_type": "client_credentials",
+                "client_id": os.environ["WENXIN_API_KEY"],
+                "client_secret": os.environ["WENXIN_SECRET_KEY"],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+    async def chat_completion(
+        self,
+        *,
+        model_id: str,
+        messages: list[LLMMessage],
+        max_tokens: int = 4096,
+        timeout: int = 30,
+    ) -> LLMResponse:
+        model = self.normalize_model_id(model_id)
+        url = self._CHAT_URL.format(model=model)
+
+        system = next((m.content for m in messages if m.role == "system"), "")
+        chat_messages = [
+            {"role": m.role, "content": m.content}
+            for m in messages if m.role != "system"
+        ]
+        body: dict[str, Any] = {"messages": chat_messages}
+        if system:
+            body["system"] = system
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            token = await self._get_access_token(client)
+            resp = await client.post(
+                url,
+                params={"access_token": token},
+                headers={"content-type": "application/json"},
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["result"]
+            return LLMResponse(text=text, provider="wenxin", model_id=model)
+
+
+class MinimaxPlugin(OpenAICompatiblePlugin):
+    """MiniMax — 海螺 AI"""
+    provider_name = "minimax"
+    _BASE_URL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
+    _API_KEY_ENV = "MINIMAX_API_KEY"
+    _ALIASES = {"abab6": "abab6.5s-chat", "abab5": "abab5.5-chat"}
+
+
+class BaichuanPlugin(OpenAICompatiblePlugin):
+    """百川智能"""
+    provider_name = "baichuan"
+    _BASE_URL = "https://api.baichuan-ai.com/v1/chat/completions"
+    _API_KEY_ENV = "BAICHUAN_API_KEY"
+    _ALIASES = {"turbo": "Baichuan4-Turbo", "air": "Baichuan4-Air"}
+
+
+class HunyuanPlugin(OpenAICompatiblePlugin):
+    """腾讯混元"""
+    provider_name = "hunyuan"
+    _BASE_URL = "https://api.hunyuan.cloud.tencent.com/v1/chat/completions"
+    _API_KEY_ENV = "HUNYUAN_API_KEY"
+    _ALIASES = {"pro": "hunyuan-pro", "lite": "hunyuan-lite"}
+
+
+class SparkPlugin:
+    """讯飞星火 — 原生 WebSocket/HTTP 格式"""
+    provider_name = "spark"
+    _BASE_URL = "https://spark-api-open.xf-yun.com/v1/chat/completions"
+    _API_KEY_ENV = "SPARK_API_KEY"
+    _ALIASES: dict[str, str] = {"max": "generalv3.5", "pro": "generalv3", "lite": "general"}
+
+    def normalize_model_id(self, model_id: str) -> str:
+        return self._ALIASES.get(model_id, model_id)
+
+    def is_available(self) -> bool:
+        return bool(os.getenv("SPARK_API_KEY"))
+
+    async def chat_completion(
+        self,
+        *,
+        model_id: str,
+        messages: list[LLMMessage],
+        max_tokens: int = 4096,
+        timeout: int = 30,
+    ) -> LLMResponse:
+        api_key = os.environ["SPARK_API_KEY"]
+        model = self.normalize_model_id(model_id)
+        body: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                self._BASE_URL,
+                headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
+                json=body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            return LLMResponse(text=text, provider="spark", model_id=model)
+
 
 class GeminiPlugin:
+    """Google Gemini — 原生 API 格式"""
     provider_name = "gemini"
     _BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-
     _ALIASES: dict[str, str] = {
         "flash": "gemini-2.0-flash",
         "pro":   "gemini-2.0-pro",
+        "flash-lite": "gemini-2.0-flash-lite",
     }
 
     def normalize_model_id(self, model_id: str) -> str:
@@ -290,13 +457,9 @@ class GeminiPlugin:
 
         system = next((m.content for m in messages if m.role == "system"), "")
         contents = [
-            {
-                "role": "user" if m.role == "user" else "model",
-                "parts": [{"text": m.content}],
-            }
+            {"role": "user" if m.role == "user" else "model", "parts": [{"text": m.content}]}
             for m in messages if m.role != "system"
         ]
-
         body: dict[str, Any] = {
             "contents": contents,
             "generationConfig": {"maxOutputTokens": max_tokens},
@@ -305,44 +468,64 @@ class GeminiPlugin:
             body["system_instruction"] = {"parts": [{"text": system}]}
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                url,
-                headers={"content-type": "application/json"},
-                json=body,
-            )
+            resp = await client.post(url, headers={"content-type": "application/json"}, json=body)
             resp.raise_for_status()
             data = resp.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"]
             return LLMResponse(text=text, provider="gemini", model_id=model)
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # ProviderRegistry
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 class ProviderRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, Any] = {}
         for plugin in [
+            # Anthropic-native
             AnthropicPlugin(),
             ZhipuPlugin(),
+            # OpenAI-compatible — 国际
             OpenAIPlugin(),
+            MistralPlugin(),
+            GroqPlugin(),
+            TogetherPlugin(),
+            OpenRouterPlugin(),
+            PerplexityPlugin(),
+            CoherePlugin(),
+            # OpenAI-compatible — 国内
+            DeepSeekPlugin(),
+            MoonshotPlugin(),
+            QwenPlugin(),
+            DoubaoPlugin(),
+            SiliconFlowPlugin(),
+            YiPlugin(),
+            MinimaxPlugin(),
+            BaichuanPlugin(),
+            HunyuanPlugin(),
+            # 原生格式
+            WenxinPlugin(),
+            SparkPlugin(),
             GeminiPlugin(),
+            # 本地
             OllamaPlugin(),
         ]:
             self._plugins[plugin.provider_name] = plugin
 
     def register(self, plugin: Any) -> None:
+        """注册自定义 provider plugin"""
         self._plugins[plugin.provider_name] = plugin
 
     def resolve(self, provider: str) -> Any:
         plugin = self._plugins.get(provider)
         if plugin is None:
-            supported = ", ".join(self._plugins)
-            raise ValueError(
-                f"Unknown provider '{provider}'. Supported: {supported}"
-            )
+            supported = ", ".join(sorted(self._plugins))
+            raise ValueError(f"Unknown provider '{provider}'. Supported: {supported}")
         return plugin
+
+    def list_providers(self) -> list[str]:
+        return sorted(self._plugins)
 
     async def chat_completion(
         self,
@@ -353,13 +536,11 @@ class ProviderRegistry:
         timeout: int = 30,
     ) -> str:
         """
-        model 格式: "provider/model-id"，如 "zhipu/glm-4.7"
-        返回纯文本，供调用方解析 JSON。
+        model 格式: "provider/model-id"
+        示例: "zhipu/glm-4.7" | "deepseek/v3" | "openrouter/anthropic/claude-opus-4"
         """
         if "/" not in model:
-            raise ValueError(
-                f"XFUSION_MODEL must be 'provider/model-id' format, got: '{model}'"
-            )
+            raise ValueError(f"XFUSION_MODEL must be 'provider/model-id' format, got: '{model}'")
         provider, model_id = model.split("/", 1)
         plugin = self.resolve(provider)
         response = await plugin.chat_completion(
@@ -371,5 +552,5 @@ class ProviderRegistry:
         return response.text
 
 
-# 全局单例，模块加载时初始化
+# 全局单例
 registry = ProviderRegistry()
