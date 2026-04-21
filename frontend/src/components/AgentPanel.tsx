@@ -8,7 +8,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
   Drawer,
-  Empty,
   Input,
   Select,
   Space,
@@ -229,9 +228,10 @@ export function AgentPanel() {
 
   const selectedHostNames = selectedHosts.map((hostId) => hostNameMap.get(hostId) ?? `host-${hostId}`)
   const canExecute = Boolean(prompt.trim() && selectedHosts.length)
+  const isIdle = conversationEntries.length === 0
 
   return (
-    <div className="agent-stage window-draggable">
+    <div className={`agent-stage window-draggable${isIdle ? ' agent-stage--idle' : ''}${pendingDraft ? ' agent-stage--busy' : ''}`}>
       {contextHolder}
 
       <div className="agent-stage__hero window-drag-handle">
@@ -241,7 +241,7 @@ export function AgentPanel() {
             直接用 Agent 驱动运维任务
           </Typography.Title>
           <Typography.Paragraph style={{ margin: 0 }}>
-            借鉴 OpenClaw 的 chat-first 控制台和 claude-code-webui 的紧凑会话流，只保留任务对话、执行反馈和底部输入。
+            参考 Kimi 的极简对话首页和 MiniMax 的品牌节奏，当前界面只保留最必要的对话、执行反馈和输入主轴。
           </Typography.Paragraph>
         </div>
         <div className="agent-stage__hero-meta">
@@ -292,6 +292,11 @@ export function AgentPanel() {
                   </Space>
                 </div>
                 <div className="agent-message__body agent-message__body--pending">
+                  <div className="agent-typing">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
                   <Typography.Paragraph style={{ marginBottom: 0 }}>
                     正在连接目标主机、拉取上下文、生成计划并执行任务。
                   </Typography.Paragraph>
@@ -328,11 +333,14 @@ export function AgentPanel() {
           )
         }) : (
           <div className="agent-stage__empty">
-            <Empty
-              description="从一句自然语言开始。Agent 会基于当前主机上下文执行规划、调用工具、返回结果。"
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-            <Space wrap size={[8, 8]}>
+            <div className="agent-stage__empty-orb" />
+            <Typography.Title level={3} style={{ margin: 0 }}>
+              告诉 Agent 你要达成什么目标
+            </Typography.Title>
+            <Typography.Paragraph className="agent-stage__empty-copy">
+              从一句自然语言开始。Agent 会结合当前主机上下文、模型配置和工具能力，自己规划并返回结果。
+            </Typography.Paragraph>
+            <Space wrap size={[8, 8]} className="agent-stage__empty-picks">
               {quickPrompts.map((item) => (
                 <Tag
                   key={item}
@@ -347,7 +355,7 @@ export function AgentPanel() {
         )}
       </div>
 
-      <div className="agent-stage__composer">
+      <div className={`agent-stage__composer${isIdle ? ' agent-stage__composer--spotlight' : ''}`}>
         <Input.TextArea
           rows={4}
           value={prompt}
@@ -360,8 +368,8 @@ export function AgentPanel() {
           }}
           placeholder="直接告诉 Agent 你要做什么，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
         />
-        <div className="agent-stage__composer-row">
-          <Space wrap size={[8, 8]}>
+        {isIdle ? (
+          <div className="agent-stage__composer-suggestions">
             {quickPrompts.map((item) => (
               <Tag
                 key={item}
@@ -371,7 +379,13 @@ export function AgentPanel() {
                 {item}
               </Tag>
             ))}
-          </Space>
+          </div>
+        ) : null}
+        <div className="agent-stage__composer-row">
+          <div className="agent-stage__composer-status">
+            <Tag color="geekblue">{activeModel}</Tag>
+            <Tag color="green">{selectedHosts.length} 台主机</Tag>
+          </div>
           <Typography.Text type="secondary">
             当前目标：{selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
             {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
@@ -388,7 +402,7 @@ export function AgentPanel() {
             loading={dispatching}
             onClick={runPrompt}
           >
-            {pendingDraft ? 'Agent 处理中' : '发送给 Agent'}
+            {pendingDraft ? 'Agent 思考中' : '发送给 Agent'}
           </Button>
         </div>
       </div>
