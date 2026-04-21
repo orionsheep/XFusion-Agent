@@ -67,6 +67,7 @@ class TaskExecuteRequest(BaseModel):
     session_id: str = "default"
     selected_host_ids: list[int] = Field(default_factory=list)
     auto_approve: bool = False
+    model: str | None = None
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -92,3 +93,13 @@ class AgentExecutionRequest(BaseModel):
     action_type: str
     parameters: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = False
+
+
+class ProviderKeyUpsertRequest(BaseModel):
+    key: str
+
+
+class ProviderInfo(BaseModel):
+    provider_name: str
+    is_configured: bool
+    models: list[str]
