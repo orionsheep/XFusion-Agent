@@ -715,6 +715,11 @@ body {
   padding: 14px 12px 10px;
 }
 
+.app-nav.ant-layout-sider-collapsed .app-nav__brand {
+  padding: 14px 8px 10px;
+  text-align: center;
+}
+
 .app-nav .ant-menu-item {
   height: 34px;
   line-height: 34px;
@@ -735,6 +740,14 @@ body {
   min-height: 0;
 }
 
+.control-workbench--agent-primary {
+  grid-template-columns: 1fr;
+}
+
+.control-workbench--agent-primary .control-workbench__workspace {
+  display: none;
+}
+
 .control-workbench__workspace,
 .control-workbench__agent {
   min-height: 0;
@@ -748,6 +761,10 @@ body {
 
 .control-workbench__workspace {
   padding: 10px;
+}
+
+.control-workbench--agent-primary .control-workbench__agent {
+  border-color: rgba(15, 118, 110, 0.12);
 }
 
 .control-workbench__workspace > .content-stack {

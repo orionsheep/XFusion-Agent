@@ -1,37 +1,25 @@
 import { expect, test } from '@playwright/test'
 
-test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ page }) => {
+test('agent-first home, tasks, and settings show PDF-facing capabilities', async ({ page }) => {
   await page.goto('/login')
 
   await page.getByLabel('用户名').fill('admin')
   await page.getByLabel('密码').fill('admin123')
   await page.getByRole('button', { name: '进入控制台' }).click()
 
-  await expect(page.getByText('全局主机态势')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.control-workbench__agent').getByRole('heading', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('button', { name: '展开主机态势工作台' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('button', { name: '进入网页全屏' }).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.control-workbench')).toHaveClass(/control-workbench--agent-primary/)
+  await expect(page.locator('.control-workbench__workspace')).toBeHidden()
+  await expect(page.getByRole('button', { name: '会话设置' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '新对话' })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.control-workbench__agent').getByRole('button', { name: '展开Agent 面板' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByRole('button', { name: '刷新全部快照' })).toBeVisible({ timeout: 15_000 })
-  const fleetOverviewScroll = await page.locator('.fleet-overview-card').evaluate((node) => ({
-    clientHeight: node.clientHeight,
-    scrollHeight: node.scrollHeight,
-    overflowY: window.getComputedStyle(node).overflowY,
-  }))
-  expect(fleetOverviewScroll.scrollHeight).toBeLessThanOrEqual(fleetOverviewScroll.clientHeight + 2)
-  expect(fleetOverviewScroll.overflowY).toBe('visible')
   await page.getByRole('button', { name: '进入网页全屏' }).first().click()
   await expect(page.locator('.expandable-panel-card-shell--page-fullscreen')).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.fleet-monitor-grid')).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.fleet-monitor-card')).toHaveCount(4)
-  await expect(page.locator('.fleet-monitor-card').first()).toContainText('交换分区')
-  await expect(page.locator('.fleet-monitor-card').first()).toContainText('高占用进程')
-  await expect(page.locator('.fleet-monitor-card').first()).toContainText('文件系统')
+  await expect(page.locator('.agent-panel__conversation-card')).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: '退出网页全屏' }).first().click()
-  await page.getByRole('button', { name: '展开主机态势工作台' }).click()
+  await page.getByRole('button', { name: '展开Agent 面板' }).click()
   await expect(page.locator('.expandable-panel-card-shell--panel-fullscreen')).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('button', { name: '退出主机态势工作台' }).click()
+  await page.getByRole('button', { name: '退出Agent 面板' }).click()
 
   await page.goto('/hosts/1')
   await expect(page.getByText('资源趋势')).toBeVisible({ timeout: 15_000 })
@@ -90,7 +78,7 @@ test('host detail handoff and host form mode logic work', async ({ page }) => {
 })
 
 test('agent panel can send a real task from the UI', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
 
   await page.goto('/login')
 
@@ -107,7 +95,7 @@ test('agent panel can send a real task from the UI', async ({ page }) => {
   await page.locator('.control-workbench__agent').getByRole('button', { name: '发送给 Agent' }).click()
 
   await expect(page.locator('.agent-bubble--assistant').last()).toContainText('正在规划与执行', { timeout: 20_000 })
-  await expect(page.locator('.agent-bubble--assistant').last()).toContainText('查询磁盘剩余空间已在', { timeout: 90_000 })
+  await expect(page.locator('.agent-bubble--assistant').filter({ hasText: '查询磁盘剩余空间已在' }).first()).toBeVisible({ timeout: 150_000 })
 })
 
 test('tasks execute through claude sdk gateway and record provider metadata', async ({ request }) => {

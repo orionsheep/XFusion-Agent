@@ -88,6 +88,11 @@ export function AgentPanel() {
   const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
   const [listening, setListening] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [dispatching, setDispatching] = useState(false)
+  const [pendingDraft, setPendingDraft] = useState<{
+    prompt: string
+    hostIds: number[]
+  } | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const queryClient = useQueryClient()
 
@@ -114,9 +119,13 @@ export function AgentPanel() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
+      setPendingDraft(null)
+      setDispatching(false)
       setPrompt('')
     },
     onError: (error: any) => {
+      setPendingDraft(null)
+      setDispatching(false)
       messageApi.error(error?.response?.data?.detail ?? 'Agent 任务提交失败')
     },
   })
@@ -188,7 +197,16 @@ export function AgentPanel() {
       node.scrollTop = node.scrollHeight
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [sessionTasks.length, executeMutation.isPending])
+  }, [dispatching, pendingDraft, sessionTasks.length])
+
+  useEffect(() => {
+    if (!pendingDraft || !sessionTasks.length) return
+    const latestTask = sessionTasks.at(-1)
+    if (!latestTask) return
+    if (latestTask.prompt === pendingDraft.prompt && latestTask.target_hosts?.length) {
+      setPendingDraft(null)
+    }
+  }, [pendingDraft, sessionTasks])
 
   const startVoiceInput = () => {
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -239,9 +257,17 @@ export function AgentPanel() {
       messageApi.warning('至少选择一台目标主机')
       return
     }
+    const nextPrompt = prompt.trim()
+    const nextHostIds = [...selectedHosts]
+    setPendingDraft({
+      prompt: nextPrompt,
+      hostIds: nextHostIds,
+    })
+    setDispatching(true)
+    window.setTimeout(() => setDispatching(false), 1200)
     executeMutation.mutate({
-      prompt,
-      selected_host_ids: selectedHosts,
+      prompt: nextPrompt,
+      selected_host_ids: nextHostIds,
       session_id: sessionId,
       auto_approve: false,
     })
@@ -253,13 +279,12 @@ export function AgentPanel() {
       entries.push({ type: 'user', key: `user-${task.id}`, task })
       entries.push({ type: 'assistant', key: `assistant-${task.id}`, task })
     })
-    const pendingPrompt = (executeMutation.variables as any)?.prompt
-    if (executeMutation.isPending && pendingPrompt) {
-      entries.push({ type: 'user', key: 'pending-user', prompt: pendingPrompt, pending: true })
+    if (pendingDraft?.prompt) {
+      entries.push({ type: 'user', key: 'pending-user', prompt: pendingDraft.prompt, pending: true })
       entries.push({ type: 'assistant', key: 'pending-assistant', pending: true })
     }
     return entries
-  }, [executeMutation.isPending, executeMutation.variables, sessionTasks])
+  }, [pendingDraft, sessionTasks])
 
   const selectedHostNames = selectedHosts.map((hostId) => hostNameMap.get(hostId) ?? `host-${hostId}`)
   const canExecute = Boolean(prompt.trim() && selectedHosts.length)
@@ -289,7 +314,9 @@ export function AgentPanel() {
             <div ref={conversationRef} className="panel-subcard__content agent-panel__conversation">
               {conversationEntries.length ? conversationEntries.map((entry) => {
                 if (entry.type === 'user') {
-                  const taskHosts = (entry.task?.target_hosts as number[] | undefined) ?? selectedHosts
+                  const taskHosts = (entry.task?.target_hosts as number[] | undefined)
+                    ?? (entry.pending ? pendingDraft?.hostIds : selectedHosts)
+                    ?? selectedHosts
                   return (
                     <div key={entry.key} className="agent-bubble agent-bubble--user">
                       <div className="agent-bubble__meta">
@@ -405,11 +432,11 @@ export function AgentPanel() {
                   <Button
                     type="primary"
                     icon={<PlayCircleOutlined />}
-                    disabled={!canExecute}
-                    loading={executeMutation.isPending}
+                    disabled={!canExecute || Boolean(pendingDraft)}
+                    loading={dispatching}
                     onClick={runPrompt}
                   >
-                    发送给 Agent
+                    {pendingDraft ? 'Agent 处理中' : '发送给 Agent'}
                   </Button>
                 </Space>
               </div>

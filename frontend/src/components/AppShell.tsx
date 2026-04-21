@@ -31,6 +31,7 @@ const MAX_NAV_WIDTH = 280
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
+  const agentPrimary = location.pathname === '/'
   const [navWidth, setNavWidth] = useState(() => {
     if (typeof window === 'undefined') return 176
     const stored = Number(window.localStorage.getItem('xfusion_nav_width'))
@@ -90,7 +91,7 @@ export function AppShell() {
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Sider
-        width={navWidth}
+        width={agentPrimary ? 68 : navWidth}
         theme="light"
         className="app-nav"
         style={{
@@ -101,21 +102,30 @@ export function AppShell() {
         }}
       >
         <div className="app-nav__brand">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            XFusion Agent
-          </Typography.Title>
+          {agentPrimary ? (
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              XF
+            </Typography.Title>
+          ) : (
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              XFusion Agent
+            </Typography.Title>
+          )}
         </div>
         <Menu
           selectedKeys={[selectedKey]}
           items={items}
           onClick={({ key }) => navigate(key)}
+          inlineCollapsed={agentPrimary}
           style={{ borderInlineEnd: 'none', background: 'transparent' }}
         />
       </Sider>
-      <div
-        className={`app-nav__resize-handle${draggingNav ? ' is-dragging' : ''}`}
-        onMouseDown={() => setDraggingNav(true)}
-      />
+      {agentPrimary ? null : (
+        <div
+          className={`app-nav__resize-handle${draggingNav ? ' is-dragging' : ''}`}
+          onMouseDown={() => setDraggingNav(true)}
+        />
+      )}
       <Layout style={{ minWidth: 0 }}>
         <Header
           className="app-header"
@@ -151,7 +161,7 @@ export function AppShell() {
           </div>
         </Header>
         <Content className="app-content" style={{ padding: '16px 24px 24px', overflow: 'hidden' }}>
-          <div className="control-workbench">
+          <div className={`control-workbench${agentPrimary ? ' control-workbench--agent-primary' : ''}`}>
             <section className="control-workbench__workspace">
               <Outlet />
             </section>
