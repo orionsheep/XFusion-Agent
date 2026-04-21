@@ -86,7 +86,7 @@ export function ExpandablePanelCard({
     <Card
       {...props}
       extra={mergedExtra}
-      className={`${className ?? ''}${fullscreen || pageFullscreen ? ' expandable-panel-card--fullscreen' : ''}`.trim()}
+      className={`${className ?? ''} window-draggable${fullscreen || pageFullscreen ? ' expandable-panel-card--fullscreen' : ''}`.trim()}
     >
       {resolvedChildren}
     </Card>

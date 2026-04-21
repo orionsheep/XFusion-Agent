@@ -22,6 +22,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function AgentHomePage() {
+  return null
+}
+
 function App() {
   return (
     <ConfigProvider
@@ -48,7 +52,8 @@ function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<DashboardPage />} />
+              <Route index element={<AgentHomePage />} />
+              <Route path="overview" element={<DashboardPage />} />
               <Route path="hosts" element={<HostsPage />} />
               <Route path="hosts/:hostId" element={<HostDetailPage />} />
               <Route path="tasks" element={<TasksPage />} />

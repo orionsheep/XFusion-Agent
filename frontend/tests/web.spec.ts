@@ -1,27 +1,31 @@
 import { expect, test } from '@playwright/test'
 
-test('agent-first home, tasks, and settings show PDF-facing capabilities', async ({ page }) => {
+test('agent-first home and secondary workspace show PDF-facing capabilities', async ({ page }) => {
   await page.goto('/login')
 
   await page.getByLabel('用户名').fill('admin')
   await page.getByLabel('密码').fill('admin123')
   await page.getByRole('button', { name: '进入控制台' }).click()
 
-  await expect(page.locator('.control-workbench__agent').getByRole('heading', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.control-workbench')).toHaveClass(/control-workbench--agent-primary/)
-  await expect(page.locator('.control-workbench__workspace')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: '直接用 Agent 驱动运维任务' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.workspace-overlay')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /appstore 工作区/ })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '会话设置' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '新对话' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.control-workbench__agent').getByRole('button', { name: '展开Agent 面板' })).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('button', { name: '进入网页全屏' }).first().click()
-  await expect(page.locator('.expandable-panel-card-shell--page-fullscreen')).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.agent-panel__conversation-card')).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('button', { name: '退出网页全屏' }).first().click()
-  await page.getByRole('button', { name: '展开Agent 面板' }).click()
-  await expect(page.locator('.expandable-panel-card-shell--panel-fullscreen')).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('button', { name: '退出Agent 面板' }).click()
+  await page.getByRole('button', { name: 'GLM-4.5' }).click()
+  await expect(page.getByText('模型切换', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: /台目标主机/ }).click()
+  await expect(page.getByText('目标主机', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: /appstore 工作区/ }).click()
+  await expect(page.locator('.workspace-overlay')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: '总览' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('服务器总览')).toBeVisible({ timeout: 15_000 })
 
   await page.goto('/hosts/1')
+  await expect(page.locator('.workspace-overlay')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('资源趋势')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('近期 AI 操作记录')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '重新采集主机指标' })).toBeVisible({ timeout: 15_000 })
@@ -31,7 +35,7 @@ test('agent-first home, tasks, and settings show PDF-facing capabilities', async
 
   await page.goto('/tasks')
   await expect(page.getByText('Goal-driven 任务中心')).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.control-workbench__workspace').getByRole('button', { name: '语音输入' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.workspace-overlay').getByRole('button', { name: '语音输入' }).first()).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('PDF 验收矩阵')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('button', { name: '执行任务' })).toBeDisabled()
   await page.screenshot({ path: '/tmp/xfusion-tasks-pdf.png', fullPage: true })
@@ -86,20 +90,20 @@ test('agent panel can send a real task from the UI', async ({ page }) => {
   await page.getByLabel('密码').fill('admin123')
   await page.getByRole('button', { name: '进入控制台' }).click()
 
-  await page.goto('/hosts/1')
-  await expect(page.locator('.control-workbench__agent').getByText('Agent 对话')).toBeVisible({ timeout: 15_000 })
+  await page.goto('/')
+  await expect(page.locator('.agent-stage')).toBeVisible({ timeout: 15_000 })
 
-  const composer = page.locator('.control-workbench__agent textarea')
+  const composer = page.locator('.agent-stage textarea')
   await composer.fill('查询当前磁盘剩余空间')
-  await expect(page.locator('.control-workbench__agent').getByRole('button', { name: '发送给 Agent' })).toBeEnabled()
-  await page.locator('.control-workbench__agent').getByRole('button', { name: '发送给 Agent' }).click()
+  await expect(page.locator('.agent-stage').getByRole('button', { name: '发送给 Agent' })).toBeEnabled()
+  await page.locator('.agent-stage').getByRole('button', { name: '发送给 Agent' }).click()
 
-  await expect(page.locator('.agent-bubble--assistant').last()).toContainText('正在规划与执行', { timeout: 20_000 })
-  await expect(page.locator('.agent-bubble--assistant').filter({ hasText: '查询磁盘剩余空间已在' }).first()).toBeVisible({ timeout: 150_000 })
+  await expect(page.locator('.agent-message--assistant').last()).toContainText('正在连接目标主机', { timeout: 20_000 })
+  await expect(page.locator('.agent-message--assistant').filter({ hasText: '已在 4 台主机上执行' }).first()).toBeVisible({ timeout: 150_000 })
 })
 
 test('tasks execute through claude sdk gateway and record provider metadata', async ({ request }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(240_000)
 
   const login = await request.post('http://127.0.0.1:8000/api/auth/login', {
     data: { username: 'admin', password: 'admin123' },

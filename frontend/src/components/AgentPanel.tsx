@@ -1,15 +1,12 @@
 import {
   AudioOutlined,
   PlayCircleOutlined,
-  PlusOutlined,
   RobotOutlined,
-  SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
-  Card,
   Drawer,
   Empty,
   Input,
@@ -20,8 +17,7 @@ import {
   message,
 } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
-import { ExpandablePanelCard } from './ExpandablePanelCard'
+import { useAgentConsole } from './AgentConsoleContext'
 import {
   executeTask,
   fetchHosts,
@@ -31,40 +27,16 @@ import {
 
 const quickPrompts = [
   '查询当前磁盘剩余空间',
-  '查找 /etc 下面包含 nginx 的文件',
+  '分析这四个服务器的磁盘情况',
   '22 端口被谁占用了',
-  '查询 process:nginx 的进程状态',
+  '检查 nginx 相关服务和进程',
 ]
-
-const SESSION_STORAGE_KEY = 'xfusion_agent_session_id'
-const HOSTS_STORAGE_KEY = 'xfusion_agent_selected_hosts'
 
 function getTaskStatusColor(status: string) {
   if (status === 'succeeded') return 'green'
   if (status === 'waiting_approval') return 'gold'
   if (status === 'failed') return 'red'
   return 'blue'
-}
-
-function buildSessionId() {
-  return `agent-${Date.now().toString(36)}`
-}
-
-function getStoredSessionId() {
-  if (typeof window === 'undefined') return buildSessionId()
-  const stored = window.localStorage.getItem(SESSION_STORAGE_KEY)
-  if (!stored || stored === 'console-main') return buildSessionId()
-  return stored
-}
-
-function getStoredSelectedHosts() {
-  if (typeof window === 'undefined') return [] as number[]
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(HOSTS_STORAGE_KEY) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((value) => Number.isFinite(value)) : []
-  } catch {
-    return []
-  }
 }
 
 function formatTimestamp(value?: string) {
@@ -80,14 +52,8 @@ function formatTimestamp(value?: string) {
 }
 
 export function AgentPanel() {
-  const location = useLocation()
   const [messageApi, contextHolder] = message.useMessage()
-  const [prompt, setPrompt] = useState('')
-  const [sessionId, setSessionId] = useState(getStoredSessionId)
-  const [selectedHosts, setSelectedHosts] = useState<number[]>(getStoredSelectedHosts)
-  const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
   const [listening, setListening] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(false)
   const [dispatching, setDispatching] = useState(false)
   const [pendingDraft, setPendingDraft] = useState<{
     prompt: string
@@ -95,6 +61,17 @@ export function AgentPanel() {
   } | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const queryClient = useQueryClient()
+  const {
+    prompt,
+    setPrompt,
+    sessionId,
+    selectedHosts,
+    setSelectedHosts,
+    routePinnedHostId,
+    setRoutePinnedHostId,
+    drawerOpen,
+    setDrawerOpen,
+  } = useAgentConsole()
 
   const { data: hosts = [] } = useQuery({
     queryKey: ['hosts'],
@@ -152,37 +129,10 @@ export function AgentPanel() {
     [tasks, sessionId],
   )
 
-  const latestSessionTask = sessionTasks.at(-1)
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId)
-  }, [sessionId])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(HOSTS_STORAGE_KEY, JSON.stringify(selectedHosts))
-  }, [selectedHosts])
-
-  useEffect(() => {
-    const match = location.pathname.match(/^\/hosts\/(\d+)$/)
-    if (!match) {
-      if (routePinnedHostId !== null) {
-        setRoutePinnedHostId(null)
-      }
-      return
-    }
-    const hostId = Number(match[1])
-    if (Number.isFinite(hostId)) {
-      setSelectedHosts([hostId])
-      setRoutePinnedHostId(hostId)
-    }
-  }, [location.pathname, routePinnedHostId])
-
   useEffect(() => {
     if (!hosts.length || selectedHosts.length || routePinnedHostId !== null) return
     setSelectedHosts(hosts.map((host: any) => host.id))
-  }, [hosts, routePinnedHostId, selectedHosts.length])
+  }, [hosts, routePinnedHostId, selectedHosts.length, setSelectedHosts])
 
   useEffect(() => {
     return () => {
@@ -233,21 +183,6 @@ export function AgentPanel() {
     recognition.start()
   }
 
-  const speakLatestSummary = () => {
-    const summary = latestSessionTask?.result_json?.summary
-    if (!summary || !window.speechSynthesis) return
-    const utterance = new SpeechSynthesisUtterance(summary)
-    utterance.lang = 'zh-CN'
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
-  }
-
-  const createNewConversation = () => {
-    setSessionId(buildSessionId())
-    setPrompt('')
-    messageApi.success('已创建新的 Agent 会话')
-  }
-
   const runPrompt = () => {
     if (!prompt.trim()) {
       messageApi.warning('先输入一个任务目标')
@@ -274,7 +209,13 @@ export function AgentPanel() {
   }
 
   const conversationEntries = useMemo(() => {
-    const entries: Array<{ type: 'user' | 'assistant'; key: string; task?: any; prompt?: string; pending?: boolean }> = []
+    const entries: Array<{
+      type: 'user' | 'assistant'
+      key: string
+      task?: any
+      prompt?: string
+      pending?: boolean
+    }> = []
     sessionTasks.slice(-18).forEach((task: any) => {
       entries.push({ type: 'user', key: `user-${task.id}`, task })
       entries.push({ type: 'assistant', key: `assistant-${task.id}`, task })
@@ -290,166 +231,174 @@ export function AgentPanel() {
   const canExecute = Boolean(prompt.trim() && selectedHosts.length)
 
   return (
-    <div className="agent-panel">
+    <div className="agent-stage window-draggable">
       {contextHolder}
-      <ExpandablePanelCard
-        className="panel-card resizable-card agent-panel__card"
-        title={<Typography.Title level={4} style={{ margin: 0 }}>XFusion Agent</Typography.Title>}
-        fullscreenLabel="Agent 面板"
-        extra={(
-          <Space wrap size={6}>
-            <Tag color="geekblue">{activeModel}</Tag>
-            <Tag color="green">{selectedHosts.length} 台目标主机</Tag>
-            <Button size="small" icon={<SettingOutlined />} onClick={() => setDrawerOpen(true)}>
-              会话设置
-            </Button>
-            <Button size="small" icon={<PlusOutlined />} onClick={createNewConversation}>
-              新对话
-            </Button>
-          </Space>
-        )}
-      >
-        <div className="panel-card__content agent-panel__content agent-panel__content--minimal">
-          <Card type="inner" className="panel-subcard resizable-subcard agent-panel__conversation-card" title="Agent 对话">
-            <div ref={conversationRef} className="panel-subcard__content agent-panel__conversation">
-              {conversationEntries.length ? conversationEntries.map((entry) => {
-                if (entry.type === 'user') {
-                  const taskHosts = (entry.task?.target_hosts as number[] | undefined)
-                    ?? (entry.pending ? pendingDraft?.hostIds : selectedHosts)
-                    ?? selectedHosts
-                  return (
-                    <div key={entry.key} className="agent-bubble agent-bubble--user">
-                      <div className="agent-bubble__meta">
-                        <Space size={6}>
-                          <UserOutlined />
-                          <span>你</span>
-                          <span>{formatTimestamp(entry.task?.created_at) || (entry.pending ? '发送中' : '')}</span>
-                        </Space>
-                      </div>
-                      <div className="agent-bubble__body">
-                        <Typography.Paragraph style={{ marginBottom: 0 }}>
-                          {entry.prompt ?? entry.task?.prompt}
-                        </Typography.Paragraph>
-                        <Space wrap size={6} style={{ marginTop: 10 }}>
-                          {taskHosts.slice(0, 4).map((hostId) => (
-                            <Tag key={`${entry.key}-${hostId}`}>
-                              {String(hostNameMap.get(hostId) ?? `host-${hostId}`)}
-                            </Tag>
-                          ))}
-                        </Space>
-                      </div>
-                    </div>
-                  )
-                }
 
-                if (entry.pending) {
-                  return (
-                    <div key={entry.key} className="agent-bubble agent-bubble--assistant agent-bubble--pending">
-                      <div className="agent-bubble__meta">
-                        <Space size={6}>
-                          <RobotOutlined />
-                          <span>XFusion Agent</span>
-                          <span>正在规划与执行</span>
-                        </Space>
-                      </div>
-                      <div className="agent-bubble__body">
-                        <Typography.Paragraph style={{ marginBottom: 0 }}>
-                          正在连接目标主机、生成计划并执行任务，请稍候。
-                        </Typography.Paragraph>
-                      </div>
-                    </div>
-                  )
-                }
+      <div className="agent-stage__hero window-drag-handle">
+        <div>
+          <Typography.Text className="page-kicker">LIVE AGENT CONSOLE</Typography.Text>
+          <Typography.Title level={2} style={{ margin: '8px 0 4px' }}>
+            直接用 Agent 驱动运维任务
+          </Typography.Title>
+          <Typography.Paragraph style={{ margin: 0 }}>
+            借鉴 OpenClaw 的 chat-first 控制台和 claude-code-webui 的紧凑会话流，只保留任务对话、执行反馈和底部输入。
+          </Typography.Paragraph>
+        </div>
+        <div className="agent-stage__hero-meta">
+          <span>{selectedHosts.length} 台目标主机</span>
+          <strong>{activeModel}</strong>
+        </div>
+      </div>
 
-                const task = entry.task
-                return (
-                  <div key={entry.key} className="agent-bubble agent-bubble--assistant">
-                    <div className="agent-bubble__meta">
-                      <Space size={6}>
-                        <RobotOutlined />
-                        <span>XFusion Agent</span>
-                        <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
-                        <span>{formatTimestamp(task.updated_at)}</span>
-                      </Space>
-                    </div>
-                    <div className="agent-bubble__body">
-                      <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 8 }}>
-                        {task.title}
-                      </Typography.Title>
-                      <Typography.Paragraph style={{ marginBottom: 0 }}>
-                        {task.result_json?.summary ?? task.plan_json?.plan_explanation ?? '任务已提交，等待结果。'}
-                      </Typography.Paragraph>
-                      <Space wrap size={6} style={{ marginTop: 10 }}>
-                        <Tag color="blue">{task.task_type}</Tag>
-                        {task.plan_json?.ai?.gateway_model ? <Tag color="geekblue">{task.plan_json.ai.gateway_model}</Tag> : null}
-                      </Space>
-                    </div>
-                  </div>
-                )
-              }) : (
-                <Empty
-                  description="直接输入一个目标。这里只保留会话消息，不再堆叠其他不必要的信息。"
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
-              )}
-            </div>
-          </Card>
+      <div ref={conversationRef} className="agent-stage__stream">
+        {conversationEntries.length ? conversationEntries.map((entry) => {
+          if (entry.type === 'user') {
+            const taskHosts = (entry.task?.target_hosts as number[] | undefined)
+              ?? (entry.pending ? pendingDraft?.hostIds : selectedHosts)
+              ?? selectedHosts
+            return (
+              <article key={entry.key} className="agent-message agent-message--user">
+                <div className="agent-message__meta">
+                  <Space size={6}>
+                    <UserOutlined />
+                    <span>你</span>
+                    <span>{formatTimestamp(entry.task?.created_at) || (entry.pending ? '发送中' : '')}</span>
+                  </Space>
+                </div>
+                <div className="agent-message__body">
+                  <Typography.Paragraph style={{ marginBottom: 0 }}>
+                    {entry.prompt ?? entry.task?.prompt}
+                  </Typography.Paragraph>
+                  <Space wrap size={6} style={{ marginTop: 10 }}>
+                    {taskHosts.slice(0, 4).map((hostId) => (
+                      <Tag key={`${entry.key}-${hostId}`}>
+                        {String(hostNameMap.get(hostId) ?? `host-${hostId}`)}
+                      </Tag>
+                    ))}
+                  </Space>
+                </div>
+              </article>
+            )
+          }
 
-          <Card type="inner" className="panel-subcard resizable-subcard agent-panel__composer-card" title="发送给 Agent">
-            <div className="panel-subcard__content agent-panel__composer">
-              <Input.TextArea
-                rows={4}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onPressEnter={(event) => {
-                  if (!event.shiftKey) {
-                    event.preventDefault()
-                    runPrompt()
-                  }
-                }}
-                placeholder="直接告诉 Agent 你要做什么，例如：帮我检查所有服务器里哪一台最危险。"
-              />
-              <Space wrap size={[8, 8]}>
-                {quickPrompts.map((item) => (
-                  <Tag
-                    key={item}
-                    className="agent-panel__quick-tag"
-                    onClick={() => setPrompt(item)}
-                  >
-                    {item}
-                  </Tag>
-                ))}
-              </Space>
-              <div className="agent-panel__composer-footer">
-                <Typography.Text type="secondary">
-                  当前目标：{selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
-                  {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
-                </Typography.Text>
-                <Space>
-                  <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
-                    {listening ? '正在听写' : '语音输入'}
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<PlayCircleOutlined />}
-                    disabled={!canExecute || Boolean(pendingDraft)}
-                    loading={dispatching}
-                    onClick={runPrompt}
-                  >
-                    {pendingDraft ? 'Agent 处理中' : '发送给 Agent'}
-                  </Button>
+          if (entry.pending) {
+            return (
+              <article key={entry.key} className="agent-message agent-message--assistant">
+                <div className="agent-message__meta">
+                  <Space size={6}>
+                    <RobotOutlined />
+                    <span>XFusion Agent</span>
+                    <Tag color="blue">执行中</Tag>
+                  </Space>
+                </div>
+                <div className="agent-message__body agent-message__body--pending">
+                  <Typography.Paragraph style={{ marginBottom: 0 }}>
+                    正在连接目标主机、拉取上下文、生成计划并执行任务。
+                  </Typography.Paragraph>
+                </div>
+              </article>
+            )
+          }
+
+          const task = entry.task
+          return (
+            <article key={entry.key} className="agent-message agent-message--assistant">
+              <div className="agent-message__meta">
+                <Space size={6}>
+                  <RobotOutlined />
+                  <span>XFusion Agent</span>
+                  <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
+                  <span>{formatTimestamp(task.updated_at)}</span>
                 </Space>
               </div>
-            </div>
-          </Card>
+              <div className="agent-message__body">
+                <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 8 }}>
+                  {task.title}
+                </Typography.Title>
+                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                  {task.result_json?.summary ?? task.plan_json?.plan_explanation ?? '任务已提交，等待结果。'}
+                </Typography.Paragraph>
+                <Space wrap size={6} style={{ marginTop: 10 }}>
+                  <Tag color="blue">{task.task_type}</Tag>
+                  {task.plan_json?.ai?.gateway_model ? <Tag color="geekblue">{task.plan_json.ai.gateway_model}</Tag> : null}
+                  {task.plan_json?.ai?.tool_calls?.length ? <Tag color="green">{task.plan_json.ai.tool_calls.length} 次工具调用</Tag> : null}
+                </Space>
+              </div>
+            </article>
+          )
+        }) : (
+          <div className="agent-stage__empty">
+            <Empty
+              description="从一句自然语言开始。Agent 会基于当前主机上下文执行规划、调用工具、返回结果。"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+            <Space wrap size={[8, 8]}>
+              {quickPrompts.map((item) => (
+                <Tag
+                  key={item}
+                  className="agent-stage__quick-chip"
+                  onClick={() => setPrompt(item)}
+                >
+                  {item}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+        )}
+      </div>
+
+      <div className="agent-stage__composer">
+        <Input.TextArea
+          rows={4}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onPressEnter={(event) => {
+            if (!event.shiftKey) {
+              event.preventDefault()
+              runPrompt()
+            }
+          }}
+          placeholder="直接告诉 Agent 你要做什么，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
+        />
+        <div className="agent-stage__composer-row">
+          <Space wrap size={[8, 8]}>
+            {quickPrompts.map((item) => (
+              <Tag
+                key={item}
+                className="agent-stage__quick-chip"
+                onClick={() => setPrompt(item)}
+              >
+                {item}
+              </Tag>
+            ))}
+          </Space>
+          <Typography.Text type="secondary">
+            当前目标：{selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
+            {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
+          </Typography.Text>
         </div>
-      </ExpandablePanelCard>
+        <div className="agent-stage__composer-actions">
+          <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
+            {listening ? '正在听写' : '语音输入'}
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            disabled={!canExecute || Boolean(pendingDraft)}
+            loading={dispatching}
+            onClick={runPrompt}
+          >
+            {pendingDraft ? 'Agent 处理中' : '发送给 Agent'}
+          </Button>
+        </div>
+      </div>
+
       <Drawer
         title="会话设置"
         placement="right"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={340}
+        width={360}
       >
         <div className="agent-drawer">
           <div className="agent-drawer__section">
@@ -466,7 +415,7 @@ export function AgentPanel() {
               }}
               maxTagCount="responsive"
             />
-            {routePinnedHostId ? <Tag color="cyan">已锁定当前主机</Tag> : null}
+            {routePinnedHostId ? <Tag color="cyan">当前会话锁定到单台主机</Tag> : null}
           </div>
 
           <div className="agent-drawer__section">
@@ -478,31 +427,8 @@ export function AgentPanel() {
           <div className="agent-drawer__section">
             <Typography.Text strong>当前模型</Typography.Text>
             <Tag color="geekblue">{activeModel}</Tag>
-            <Typography.Text type="secondary">模型切换入口在系统设置页面。</Typography.Text>
+            <Typography.Text type="secondary">模型自由切换入口位于系统设置。</Typography.Text>
           </div>
-
-          {latestSessionTask ? (
-            <div className="agent-drawer__section">
-              <Typography.Text strong>当前任务</Typography.Text>
-              <div className="agent-drawer__task">
-                <Typography.Text strong>{latestSessionTask.title}</Typography.Text>
-                <Typography.Paragraph style={{ margin: '6px 0 0' }}>
-                  {latestSessionTask.result_json?.summary ?? latestSessionTask.plan_json?.plan_explanation ?? '任务已提交，等待结果。'}
-                </Typography.Paragraph>
-                <Space wrap size={6}>
-                  <Tag color={getTaskStatusColor(latestSessionTask.status)}>{latestSessionTask.status}</Tag>
-                  {latestSessionTask.plan_json?.ai?.gateway_model ? (
-                    <Tag color="blue">{latestSessionTask.plan_json.ai.gateway_model}</Tag>
-                  ) : null}
-                  {latestSessionTask.result_json?.summary ? (
-                    <Button size="small" type="text" onClick={speakLatestSummary}>
-                      语音播报
-                    </Button>
-                  ) : null}
-                </Space>
-              </div>
-            </div>
-          ) : null}
         </div>
       </Drawer>
     </div>
