@@ -685,7 +685,11 @@ body {
 .app-header__bar {
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(15, 23, 42, 0.08);
-  padding: 8px 14px;
+  padding: 8px 12px;
+}
+
+.app-header__bar--compact {
+  min-height: 38px;
 }
 
 .app-header__title {
@@ -705,6 +709,22 @@ body {
 
 .app-content {
   min-height: 0;
+}
+
+.app-nav__brand {
+  padding: 14px 12px 10px;
+}
+
+.app-nav .ant-menu-item {
+  height: 34px;
+  line-height: 34px;
+  margin: 2px 8px;
+  padding-inline: 12px !important;
+  font-size: 13px;
+}
+
+.app-nav .ant-menu-title-content {
+  font-size: 13px;
 }
 
 .control-workbench {
@@ -795,46 +815,15 @@ body {
 }
 
 .agent-panel__content {
-  gap: 10px;
-}
-
-.agent-panel__hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background:
-    radial-gradient(circle at top right, rgba(15, 118, 110, 0.08), transparent 28%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 251, 0.9));
-}
-
-.agent-panel__hero-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.agent-panel__shell {
-  display: grid;
-  grid-template-columns: minmax(0, 2.9fr) minmax(280px, 1fr);
   gap: 8px;
-  flex: 1;
-  min-height: 0;
 }
 
-.agent-panel__chat-column,
-.agent-panel__rail {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
+.agent-panel__content--minimal {
+  height: 100%;
 }
 
 .agent-panel__conversation-card {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
 }
 
@@ -846,16 +835,33 @@ body {
   min-height: 0;
 }
 
+.agent-panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.agent-panel__toolbar-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .agent-panel__conversation {
-  gap: 14px;
+  gap: 12px;
   padding-right: 6px;
 }
 
 .agent-bubble {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-width: 86%;
+  gap: 6px;
+  max-width: 78%;
 }
 
 .agent-bubble--user {
@@ -875,10 +881,10 @@ body {
 }
 
 .agent-bubble__body {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.04);
 }
 
 .agent-bubble--user .agent-bubble__body {
@@ -896,7 +902,7 @@ body {
 }
 
 .agent-panel__composer {
-  gap: 10px;
+  gap: 8px;
 }
 
 .agent-panel__composer-footer {
@@ -946,6 +952,27 @@ body {
   font-weight: 600;
 }
 
+.agent-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agent-drawer__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-drawer__task {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.72);
+}
+
 .ant-card,
 .ant-card .ant-card-head,
 .ant-modal-content,
@@ -968,8 +995,8 @@ body {
   .app-header__meta,
   .dashboard-strip__inner,
   .fleet-monitor-card__header,
-  .agent-panel__hero,
-  .agent-panel__composer-footer {
+  .agent-panel__composer-footer,
+  .agent-panel__toolbar {
     flex-direction: column;
     align-items: flex-start;
   }

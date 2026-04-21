@@ -25,18 +25,18 @@ const items = [
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
 
-const MIN_NAV_WIDTH = 220
-const MAX_NAV_WIDTH = 420
+const MIN_NAV_WIDTH = 168
+const MAX_NAV_WIDTH = 280
 
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
   const [navWidth, setNavWidth] = useState(() => {
-    if (typeof window === 'undefined') return 260
+    if (typeof window === 'undefined') return 176
     const stored = Number(window.localStorage.getItem('xfusion_nav_width'))
     return Number.isFinite(stored)
       ? Math.min(MAX_NAV_WIDTH, Math.max(MIN_NAV_WIDTH, stored))
-      : 260
+      : 176
   })
   const [draggingNav, setDraggingNav] = useState(false)
   const { data: overview } = useQuery({
@@ -100,13 +100,10 @@ export function AppShell() {
           overflow: 'auto',
         }}
       >
-        <div style={{ padding: 24 }}>
-          <Typography.Title level={3} style={{ margin: 0 }}>
+        <div className="app-nav__brand">
+          <Typography.Title level={4} style={{ margin: 0 }}>
             XFusion Agent
           </Typography.Title>
-          <Typography.Paragraph style={{ margin: '8px 0 0', color: '#64748b' }}>
-            Goal-driven AI 运维控制平面
-          </Typography.Paragraph>
         </div>
         <Menu
           selectedKeys={[selectedKey]}
@@ -124,26 +121,24 @@ export function AppShell() {
           className="app-header"
           style={{
             background: 'transparent',
-            padding: '10px 24px 0',
+            padding: '6px 16px 0',
             height: 'auto',
             flexShrink: 0,
           }}
         >
-          <div className="app-header__bar">
+          <div className="app-header__bar app-header__bar--compact">
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div className="app-header__title">
-                <Typography.Text strong>XFusion Agent</Typography.Text>
-                <div className="app-header__meta">
-                  <span>多服务器状态总览、任务编排、审批与审计</span>
-                  <span className={`global-health ${riskHostCount ? 'global-health--risk' : ''}`}>
-                    <ClusterOutlined />
-                    风险主机 {riskHostCount}
-                  </span>
-                </div>
-              </div>
-              <Space>
-                <Avatar style={{ backgroundColor: '#0f766e' }}>A</Avatar>
+              <Space size={8}>
+                <Typography.Text type="secondary">控制台</Typography.Text>
+                <span className={`global-health ${riskHostCount ? 'global-health--risk' : ''}`}>
+                  <ClusterOutlined />
+                  风险主机 {riskHostCount}
+                </span>
+              </Space>
+              <Space size={8}>
+                <Avatar size="small" style={{ backgroundColor: '#0f766e' }}>A</Avatar>
                 <Button
+                  size="small"
                   onClick={() => {
                     clearStoredToken()
                     navigate('/login')
