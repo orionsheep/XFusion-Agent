@@ -160,7 +160,7 @@ class ProviderKey(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("user_id", "provider_name"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
     provider_name: str = Field(max_length=64)
     encrypted_key: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
