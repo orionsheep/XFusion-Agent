@@ -17,7 +17,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ExpandablePanelCard } from './ExpandablePanelCard'
-import { executeTask, fetchHosts, fetchTask, fetchTasks } from '../services/api'
+import { ProviderInfo, executeTask, fetchHosts, fetchProviders, fetchTask, fetchTasks } from '../services/api'
 
 const quickPrompts = [
   '查询当前磁盘剩余空间',
@@ -50,7 +50,21 @@ export function AgentPanel() {
   const [selectedTaskId, setSelectedTaskId] = useState<number>()
   const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
   const [listening, setListening] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined)
   const queryClient = useQueryClient()
+
+  const { data: providers = [] } = useQuery<ProviderInfo[]>({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+  })
+
+  const modelOptions = useMemo(() => {
+    const configured = providers.filter((p) => p.is_configured && p.models.length > 0)
+    return configured.map((p) => ({
+      label: p.provider_name,
+      options: p.models.map((m) => ({ label: m, value: m })),
+    }))
+  }, [providers])
 
   const { data: hosts = [] } = useQuery({
     queryKey: ['hosts'],
@@ -174,6 +188,7 @@ export function AgentPanel() {
       selected_host_ids: selectedHosts,
       session_id: sessionId,
       auto_approve: false,
+      model: selectedModel ?? null,
     })
   }
 
@@ -314,15 +329,27 @@ export function AgentPanel() {
                 <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
                   {listening ? '正在听写' : '语音输入'}
                 </Button>
-                <Button
-                  type="primary"
-                  icon={<PlayCircleOutlined />}
-                  disabled={!canExecute}
-                  loading={executeMutation.isPending}
-                  onClick={runPrompt}
-                >
-                  发送给 Agent
-                </Button>
+                <Space>
+                  <Select
+                    size="small"
+                    allowClear
+                    placeholder="默认模型"
+                    value={selectedModel}
+                    onChange={setSelectedModel}
+                    options={modelOptions}
+                    style={{ width: 200 }}
+                    popupMatchSelectWidth={false}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<PlayCircleOutlined />}
+                    disabled={!canExecute}
+                    loading={executeMutation.isPending}
+                    onClick={runPrompt}
+                  >
+                    发送给 Agent
+                  </Button>
+                </Space>
               </Space>
             </div>
           </Card>
