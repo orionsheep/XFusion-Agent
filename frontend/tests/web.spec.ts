@@ -89,6 +89,27 @@ test('host detail handoff and host form mode logic work', async ({ page }) => {
   await expect(page.getByLabel('SSH 用户名')).toBeHidden()
 })
 
+test('agent panel can send a real task from the UI', async ({ page }) => {
+  test.setTimeout(120_000)
+
+  await page.goto('/login')
+
+  await page.getByLabel('用户名').fill('admin')
+  await page.getByLabel('密码').fill('admin123')
+  await page.getByRole('button', { name: '进入控制台' }).click()
+
+  await page.goto('/hosts/1')
+  await expect(page.locator('.control-workbench__agent').getByText('Agent 对话')).toBeVisible({ timeout: 15_000 })
+
+  const composer = page.locator('.control-workbench__agent textarea')
+  await composer.fill('查询当前磁盘剩余空间')
+  await expect(page.locator('.control-workbench__agent').getByRole('button', { name: '发送给 Agent' })).toBeEnabled()
+  await page.locator('.control-workbench__agent').getByRole('button', { name: '发送给 Agent' }).click()
+
+  await expect(page.locator('.agent-bubble--assistant').last()).toContainText('正在规划与执行', { timeout: 20_000 })
+  await expect(page.locator('.agent-bubble--assistant').last()).toContainText('查询磁盘剩余空间已在', { timeout: 90_000 })
+})
+
 test('tasks execute through claude sdk gateway and record provider metadata', async ({ request }) => {
   test.setTimeout(120_000)
 
