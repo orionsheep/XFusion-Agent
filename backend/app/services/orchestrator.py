@@ -29,6 +29,10 @@ from .platform import (
 from .monitoring import MonitoringCoreService
 
 
+def _has_claude_credentials() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
     if not text:
         return None
@@ -128,17 +132,20 @@ class ClaudePlanner:
         system_prompt: str,
         max_turns: int = 2,
         timeout_seconds: int = 20,
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if not settings.claude_enabled:
             return None
         try:
             text = await registry.chat_completion(
-                model=settings.model,
+                model=model or settings.model,
                 messages=[
                     LLMMessage(role="system", content=system_prompt),
                     LLMMessage(role="user", content=prompt),
                 ],
                 timeout=timeout_seconds,
+                api_keys=api_keys,
             )
             return _extract_json_payload(text)
         except Exception:
@@ -153,6 +160,8 @@ class ClaudePlanner:
         selected_host_ids: list[int],
         session: Session,
         session_id: str,
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> IntentPlan | None:
         recent_tasks = _recent_task_context(session, session_id)
         payload = {
@@ -186,6 +195,8 @@ class ClaudePlanner:
             system_prompt=system_prompt,
             max_turns=2,
             timeout_seconds=20,
+            model=model,
+            api_keys=api_keys,
         )
         if not result:
             return None
@@ -213,6 +224,8 @@ class ClaudePlanner:
         observation: dict[str, Any],
         session: Session,
         session_id: str,
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         recent_tasks = _recent_task_context(session, session_id)
         system_prompt = (
@@ -239,6 +252,8 @@ class ClaudePlanner:
             system_prompt=system_prompt,
             max_turns=2,
             timeout_seconds=25,
+            model=model,
+            api_keys=api_keys,
         )
 
     @classmethod
@@ -250,6 +265,8 @@ class ClaudePlanner:
         plan: IntentPlan,
         action_result: dict[str, Any],
         verification_result: dict[str, Any],
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> str | None:
         system_prompt = (
             "You summarize Linux operations results for a web control plane. "
@@ -273,6 +290,8 @@ class ClaudePlanner:
             system_prompt=system_prompt,
             max_turns=1,
             timeout_seconds=12,
+            model=model,
+            api_keys=api_keys,
         )
         if result and isinstance(result.get("summary"), str):
             return result["summary"].strip()
@@ -283,6 +302,14 @@ class GoalDrivenOrchestrator:
     def __init__(self, session: Session, user: User):
         self.session = session
         self.user = user
+
+    def _load_user_api_keys(self) -> dict[str, str]:
+        from ..models.entities import ProviderKey
+        from ..services.security import decrypt_secret
+        rows = self.session.exec(
+            select(ProviderKey).where(ProviderKey.user_id == self.user.id)
+        ).all()
+        return {row.provider_name: decrypt_secret(row.encrypted_key) for row in rows}
 
     def _fallback_plan(self, prompt: str, session_context: dict[str, Any] | None = None) -> IntentPlan:
         lowered = prompt.lower()
@@ -431,7 +458,7 @@ class GoalDrivenOrchestrator:
 
         return plan
 
-    async def _build_plan(self, prompt: str, host: Host, selected_hosts: list[int], session_id: str) -> IntentPlan:
+    async def _build_plan(self, prompt: str, host: Host, selected_hosts: list[int], session_id: str, model: str | None = None, api_keys: dict[str, Any] | None = None) -> IntentPlan:
         session_context = _session_continuation_context(self.session, session_id)
         plan = await ClaudePlanner.plan_task(
             prompt=prompt,
@@ -439,6 +466,8 @@ class GoalDrivenOrchestrator:
             selected_host_ids=selected_hosts,
             session=self.session,
             session_id=session_id,
+            model=model,
+            api_keys=api_keys,
         )
         normalized = self._normalize_plan(prompt, plan or self._fallback_plan(prompt, session_context))
         if session_context and "context_reused" in json.dumps(normalized.criteria, ensure_ascii=False):
@@ -680,6 +709,8 @@ class GoalDrivenOrchestrator:
         hosts: list[Host],
         credentials: dict[int, HostCredential | None],
         plan: IntentPlan,
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> Task:
         read_only_actions = {"query_disk", "search_files", "check_port", "query_process"}
         per_host_results: list[dict[str, Any]] = []
@@ -732,6 +763,8 @@ class GoalDrivenOrchestrator:
                 plan=plan,
                 action_result=per_host_results[0]["action_result"],
                 verification_result=per_host_results[0]["verification_result"],
+                model=model,
+                api_keys=api_keys,
             )
         host_statuses = "，".join(
             f"{item['host_name']}:{'成功' if item['success'] else '失败'}" for item in per_host_results
@@ -768,6 +801,8 @@ class GoalDrivenOrchestrator:
         credential: HostCredential | None,
         plan: IntentPlan,
         auto_approve: bool,
+        model: str | None = None,
+        api_keys: dict[str, Any] | None = None,
     ) -> Task:
         observation = await self._execute_action(host, credential, "diagnose_service", plan.parameters)
         self._record_step(
@@ -785,6 +820,8 @@ class GoalDrivenOrchestrator:
             observation=observation,
             session=self.session,
             session_id=task.session_id,
+            model=model,
+            api_keys=api_keys,
         )
         diagnosis = diagnosis or {
             "summary": "已完成基础诊断，但未获得 AI 结构化结论。",
@@ -855,7 +892,7 @@ class GoalDrivenOrchestrator:
                 explanation=recommendation_plan.explanation,
                 policy=policy,
             )
-        return await self._run_act_and_verify(task=task, hosts=[host], credentials={host.id: credential}, plan=recommendation_plan)
+        return await self._run_act_and_verify(task=task, hosts=[host], credentials={host.id: credential}, plan=recommendation_plan, model=model, api_keys=api_keys)
 
     def _blast_radius(self, selected_host_ids: list[int], parameters: dict[str, Any]) -> dict[str, Any]:
         services = list(
@@ -867,9 +904,11 @@ class GoalDrivenOrchestrator:
             "paths": [parameters.get("path")] if parameters.get("path") else [],
         }
 
-    async def execute(self, prompt: str, session_id: str, selected_host_ids: list[int], auto_approve: bool) -> Task:
+    async def execute(self, prompt: str, session_id: str, selected_host_ids: list[int], auto_approve: bool, model: str | None = None) -> Task:
         if not selected_host_ids:
             raise HTTPException(status_code=400, detail="At least one host must be selected")
+        resolved_model = model or settings.model
+        api_keys = self._load_user_api_keys()
 
         hosts = [HostRepository.get_host(self.session, host_id) for host_id in selected_host_ids]
         credentials = {host.id: HostRepository.get_credential(self.session, host.id) for host in hosts}
@@ -891,7 +930,7 @@ class GoalDrivenOrchestrator:
             }
         live_metrics = live_metrics_by_host[host.id]["metrics"]
 
-        plan = await self._build_plan(prompt, host, selected_host_ids, session_id)
+        plan = await self._build_plan(prompt, host, selected_host_ids, session_id, resolved_model, api_keys)
         policy = PolicyEngine.evaluate(plan.action_type, plan.parameters, host)
         policy["blast_radius"] = self._blast_radius(selected_host_ids, plan.parameters)
         task = self._create_task(
@@ -963,6 +1002,8 @@ class GoalDrivenOrchestrator:
                 credential=credential,
                 plan=plan,
                 auto_approve=auto_approve,
+                model=resolved_model,
+                api_keys=api_keys,
             )
 
         if policy.get("approval_required") and not auto_approve:
@@ -975,7 +1016,7 @@ class GoalDrivenOrchestrator:
                 policy=policy,
             )
 
-        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan)
+        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan, model=resolved_model, api_keys=api_keys)
 
     async def resume_after_approval(self, approval: Approval, approver: User, approved: bool, reason: str | None) -> Task:
         task = self.session.get(Task, approval.task_id)
@@ -1024,7 +1065,7 @@ class GoalDrivenOrchestrator:
             parameters=approval.action_payload.get("parameters") or {},
             explanation=str(approval.action_payload.get("explanation") or ""),
         )
-        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan)
+        return await self._run_act_and_verify(task=task, hosts=hosts, credentials=credentials, plan=plan, model=None, api_keys=self._load_user_api_keys())
 
 
 def build_validation_matrix(session: Session) -> list[dict[str, Any]]:
