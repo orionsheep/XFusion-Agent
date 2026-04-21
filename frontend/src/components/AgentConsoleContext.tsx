@@ -13,8 +13,6 @@ type AgentConsoleContextValue = {
   setSelectedHosts: (value: number[]) => void
   routePinnedHostId: number | null
   setRoutePinnedHostId: (value: number | null) => void
-  drawerOpen: boolean
-  setDrawerOpen: (value: boolean) => void
   createNewConversation: () => void
 }
 
@@ -47,7 +45,6 @@ export function AgentConsoleProvider({ children }: { children: React.ReactNode }
   const [sessionId, setSessionId] = useState(getStoredSessionId)
   const [selectedHosts, setSelectedHosts] = useState<number[]>(getStoredSelectedHosts)
   const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
-  const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -83,13 +80,11 @@ export function AgentConsoleProvider({ children }: { children: React.ReactNode }
     setSelectedHosts,
     routePinnedHostId,
     setRoutePinnedHostId,
-    drawerOpen,
-    setDrawerOpen,
     createNewConversation: () => {
       setSessionId(buildSessionId())
       setPrompt('')
     },
-  }), [drawerOpen, prompt, routePinnedHostId, selectedHosts, sessionId])
+  }), [prompt, routePinnedHostId, selectedHosts, sessionId])
 
   return (
     <AgentConsoleContext.Provider value={value}>

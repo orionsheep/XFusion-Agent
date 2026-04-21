@@ -7,9 +7,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
-  Drawer,
   Input,
-  Select,
   Space,
   Tag,
   Typography,
@@ -29,6 +27,13 @@ const quickPrompts = [
   '分析这四个服务器的磁盘情况',
   '22 端口被谁占用了',
   '检查 nginx 相关服务和进程',
+]
+
+const pendingPhases = [
+  '连接目标主机并读取上下文',
+  '分析当前状态并生成执行计划',
+  '调用运维工具并验证结果',
+  '整理结论并准备返回',
 ]
 
 function getTaskStatusColor(status: string) {
@@ -58,7 +63,11 @@ export function AgentPanel() {
     prompt: string
     hostIds: number[]
   } | null>(null)
+  const [pendingPhaseIndex, setPendingPhaseIndex] = useState(0)
+  const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null)
+  const [streamingSummary, setStreamingSummary] = useState('')
   const conversationRef = useRef<HTMLDivElement | null>(null)
+  const streamedTaskRef = useRef<number | null>(null)
   const queryClient = useQueryClient()
   const {
     prompt,
@@ -67,9 +76,6 @@ export function AgentPanel() {
     selectedHosts,
     setSelectedHosts,
     routePinnedHostId,
-    setRoutePinnedHostId,
-    drawerOpen,
-    setDrawerOpen,
   } = useAgentConsole()
 
   const { data: hosts = [] } = useQuery({
@@ -106,13 +112,8 @@ export function AgentPanel() {
     },
   })
 
-  const hostOptions = useMemo(
-    () => hosts.map((host: any) => ({ label: `${host.name} (${host.address})`, value: host.id })),
-    [hosts],
-  )
-
   const hostNameMap = useMemo(
-    () => new Map(hosts.map((host: any) => [host.id, host.name])),
+    () => new Map<number, string>(hosts.map((host: any) => [Number(host.id), String(host.name)])),
     [hosts],
   )
 
@@ -154,8 +155,46 @@ export function AgentPanel() {
     if (!latestTask) return
     if (latestTask.prompt === pendingDraft.prompt && latestTask.target_hosts?.length) {
       setPendingDraft(null)
+      setPendingPhaseIndex(0)
     }
   }, [pendingDraft, sessionTasks])
+
+  useEffect(() => {
+    if (!pendingDraft) {
+      setPendingPhaseIndex(0)
+      return
+    }
+    const timer = window.setInterval(() => {
+      setPendingPhaseIndex((index) => (index + 1) % pendingPhases.length)
+    }, 1400)
+    return () => window.clearInterval(timer)
+  }, [pendingDraft])
+
+  const latestTask = sessionTasks.at(-1)
+  const latestTaskId = latestTask?.id ?? null
+  const latestTaskSummary = latestTask
+    ? (latestTask.result_json?.summary ?? latestTask.plan_json?.plan_explanation ?? '')
+    : ''
+
+  useEffect(() => {
+    if (!latestTaskId || !latestTaskSummary || pendingDraft) return
+    if (streamedTaskRef.current === latestTaskId) return
+    streamedTaskRef.current = latestTaskId
+    setStreamingTaskId(latestTaskId)
+    setStreamingSummary('')
+
+    let cursor = 0
+    const chunk = Math.max(2, Math.ceil(latestTaskSummary.length / 42))
+    const timer = window.setInterval(() => {
+      cursor = Math.min(latestTaskSummary.length, cursor + chunk)
+      setStreamingSummary(latestTaskSummary.slice(0, cursor))
+      if (cursor >= latestTaskSummary.length) {
+        window.clearInterval(timer)
+      }
+    }, 36)
+
+    return () => window.clearInterval(timer)
+  }, [latestTaskId, latestTaskSummary, pendingDraft])
 
   const startVoiceInput = () => {
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -234,20 +273,17 @@ export function AgentPanel() {
     <div className={`agent-stage window-draggable${isIdle ? ' agent-stage--idle' : ''}${pendingDraft ? ' agent-stage--busy' : ''}`}>
       {contextHolder}
 
-      <div className="agent-stage__hero window-drag-handle">
-        <div>
-          <Typography.Text className="page-kicker">LIVE AGENT CONSOLE</Typography.Text>
-          <Typography.Title level={2} style={{ margin: '8px 0 4px' }}>
-            直接用 Agent 驱动运维任务
-          </Typography.Title>
-          <Typography.Paragraph style={{ margin: 0 }}>
-            参考 Kimi 的极简对话首页和 MiniMax 的品牌节奏，当前界面只保留最必要的对话、执行反馈和输入主轴。
-          </Typography.Paragraph>
+      <div className="agent-stage__threadbar window-drag-handle">
+        <div className="agent-stage__threadbar-main">
+          <Typography.Text strong>XFusion Agent</Typography.Text>
+          <Typography.Text type="secondary">
+            会话 {sessionId.slice(0, 14)}
+          </Typography.Text>
         </div>
-        <div className="agent-stage__hero-meta">
-          <span>{selectedHosts.length} 台目标主机</span>
-          <strong>{activeModel}</strong>
-        </div>
+        <Space size={8} wrap className="agent-stage__threadbar-meta">
+          <Tag color="geekblue">{activeModel}</Tag>
+          <Tag color="green">{selectedHosts.length} 台主机</Tag>
+        </Space>
       </div>
 
       <div ref={conversationRef} className="agent-stage__stream">
@@ -298,14 +334,23 @@ export function AgentPanel() {
                     <span />
                   </div>
                   <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    正在连接目标主机、拉取上下文、生成计划并执行任务。
+                    {pendingPhases[pendingPhaseIndex]}
                   </Typography.Paragraph>
+                  <Typography.Text type="secondary" className="agent-message__phase-caption">
+                    Agent 正在持续规划和执行，结果会在当前线程里逐步返回。
+                  </Typography.Text>
                 </div>
               </article>
             )
           }
 
           const task = entry.task
+          const toolCalls = task.plan_json?.ai?.tool_calls ?? []
+          const perHost = task.result_json?.per_host ?? []
+          const finalSummary = task.result_json?.summary ?? task.plan_json?.plan_explanation ?? '任务已提交，等待结果。'
+          const visibleSummary = task.id === streamingTaskId && streamingSummary
+            ? streamingSummary
+            : finalSummary
           return (
             <article key={entry.key} className="agent-message agent-message--assistant">
               <div className="agent-message__meta">
@@ -321,24 +366,56 @@ export function AgentPanel() {
                   {task.title}
                 </Typography.Title>
                 <Typography.Paragraph style={{ marginBottom: 0 }}>
-                  {task.result_json?.summary ?? task.plan_json?.plan_explanation ?? '任务已提交，等待结果。'}
+                  {visibleSummary}
+                  {task.id === streamingTaskId && visibleSummary.length < finalSummary.length ? (
+                    <span className="agent-message__cursor" aria-hidden="true">▍</span>
+                  ) : null}
                 </Typography.Paragraph>
-                <Space wrap size={6} style={{ marginTop: 10 }}>
-                  <Tag color="blue">{task.task_type}</Tag>
-                  {task.plan_json?.ai?.gateway_model ? <Tag color="geekblue">{task.plan_json.ai.gateway_model}</Tag> : null}
-                  {task.plan_json?.ai?.tool_calls?.length ? <Tag color="green">{task.plan_json.ai.tool_calls.length} 次工具调用</Tag> : null}
-                </Space>
+                {(toolCalls.length || perHost.length) ? (
+                  <details className="agent-message__details">
+                    <summary>执行细节</summary>
+                    <div className="agent-message__details-body">
+                      <div className="agent-message__detail-line">
+                        <span>任务类型</span>
+                        <strong>{task.task_type}</strong>
+                      </div>
+                      {task.plan_json?.ai?.gateway_model ? (
+                        <div className="agent-message__detail-line">
+                          <span>模型</span>
+                          <strong>{task.plan_json.ai.gateway_model}</strong>
+                        </div>
+                      ) : null}
+                      {toolCalls.length ? (
+                        <div className="agent-message__detail-line">
+                          <span>工具调用</span>
+                          <strong>{toolCalls.length} 次</strong>
+                        </div>
+                      ) : null}
+                      {perHost.length ? (
+                        <div className="agent-message__host-results">
+                          {perHost.map((item: any, index: number) => (
+                            <div key={`${task.id}-host-${index}`} className="agent-message__host-row">
+                              <span>{hostNameMap.get(item.host_id) ?? `host-${item.host_id}`}</span>
+                              <Tag color={item.success ? 'green' : 'red'}>
+                                {item.success ? '成功' : '失败'}
+                              </Tag>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
               </div>
             </article>
           )
         }) : (
           <div className="agent-stage__empty">
-            <div className="agent-stage__empty-orb" />
             <Typography.Title level={3} style={{ margin: 0 }}>
-              告诉 Agent 你要达成什么目标
+              今天想让 Agent 处理什么？
             </Typography.Title>
             <Typography.Paragraph className="agent-stage__empty-copy">
-              从一句自然语言开始。Agent 会结合当前主机上下文、模型配置和工具能力，自己规划并返回结果。
+              直接用自然语言描述目标。Agent 会结合当前主机、模型和工具能力，自动规划并返回结果。
             </Typography.Paragraph>
             <Space wrap size={[8, 8]} className="agent-stage__empty-picks">
               {quickPrompts.map((item) => (
@@ -356,6 +433,14 @@ export function AgentPanel() {
       </div>
 
       <div className={`agent-stage__composer${isIdle ? ' agent-stage__composer--spotlight' : ''}`}>
+        <div className="agent-stage__composer-statusbar">
+          <Tag color="geekblue">{activeModel}</Tag>
+          <Tag color="green">{selectedHosts.length} 台主机</Tag>
+          <Typography.Text type="secondary">
+            {selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
+            {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
+          </Typography.Text>
+        </div>
         <Input.TextArea
           rows={4}
           value={prompt}
@@ -366,7 +451,7 @@ export function AgentPanel() {
               runPrompt()
             }
           }}
-          placeholder="直接告诉 Agent 你要做什么，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
+          placeholder="给 Agent 一个目标，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
         />
         {isIdle ? (
           <div className="agent-stage__composer-suggestions">
@@ -381,16 +466,6 @@ export function AgentPanel() {
             ))}
           </div>
         ) : null}
-        <div className="agent-stage__composer-row">
-          <div className="agent-stage__composer-status">
-            <Tag color="geekblue">{activeModel}</Tag>
-            <Tag color="green">{selectedHosts.length} 台主机</Tag>
-          </div>
-          <Typography.Text type="secondary">
-            当前目标：{selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
-            {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
-          </Typography.Text>
-        </div>
         <div className="agent-stage__composer-actions">
           <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
             {listening ? '正在听写' : '语音输入'}
@@ -407,44 +482,6 @@ export function AgentPanel() {
         </div>
       </div>
 
-      <Drawer
-        title="会话设置"
-        placement="right"
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        width={360}
-      >
-        <div className="agent-drawer">
-          <div className="agent-drawer__section">
-            <Typography.Text strong>目标主机</Typography.Text>
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="选择目标主机"
-              options={hostOptions}
-              value={selectedHosts}
-              onChange={(values) => {
-                setSelectedHosts(values)
-                setRoutePinnedHostId(null)
-              }}
-              maxTagCount="responsive"
-            />
-            {routePinnedHostId ? <Tag color="cyan">当前会话锁定到单台主机</Tag> : null}
-          </div>
-
-          <div className="agent-drawer__section">
-            <Typography.Text strong>当前会话</Typography.Text>
-            <Input value={sessionId} readOnly />
-            <Typography.Text type="secondary">新对话会生成新的会话上下文。</Typography.Text>
-          </div>
-
-          <div className="agent-drawer__section">
-            <Typography.Text strong>当前模型</Typography.Text>
-            <Tag color="geekblue">{activeModel}</Tag>
-            <Typography.Text type="secondary">模型自由切换入口位于系统设置。</Typography.Text>
-          </div>
-        </div>
-      </Drawer>
     </div>
   )
 }
