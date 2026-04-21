@@ -86,3 +86,34 @@ test('host detail handoff and host form mode logic work', async ({ page }) => {
   await expect(page.getByLabel('Agent URL')).toBeVisible()
   await expect(page.getByLabel('SSH 用户名')).toBeHidden()
 })
+
+test('tasks execute through claude sdk gateway and record provider metadata', async ({ request }) => {
+  test.setTimeout(120_000)
+
+  const login = await request.post('http://127.0.0.1:8000/api/auth/login', {
+    data: { username: 'admin', password: 'admin123' },
+  })
+  expect(login.ok()).toBeTruthy()
+  const { access_token } = await login.json()
+
+  const execute = await request.post('http://127.0.0.1:8000/api/tasks/execute', {
+    headers: {
+      Authorization: `Bearer ${access_token}`,
+      'Content-Type': 'application/json',
+    },
+    data: {
+      prompt: '查询当前磁盘剩余空间',
+      session_id: 'playwright-claude-gateway',
+      selected_host_ids: [1],
+    },
+  })
+
+  expect(execute.ok()).toBeTruthy()
+  const task = await execute.json()
+  expect(task.status).toBe('succeeded')
+  expect(task.plan_json.ai.agent_runtime).toBe('claude_agent_sdk')
+  expect(task.plan_json.ai.gateway_mode).toBeTruthy()
+  expect(task.plan_json.ai.gateway_provider).toBe('minimax')
+  expect(task.plan_json.ai.tool_calls.length).toBeGreaterThan(0)
+  expect(task.result_json.per_host[0].success).toBeTruthy()
+})

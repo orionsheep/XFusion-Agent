@@ -372,7 +372,7 @@ async def execute_task(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     orchestrator = GoalDrivenOrchestrator(session, current_user)
-    task = await orchestrator.execute(payload.prompt, payload.session_id, payload.selected_host_ids, payload.auto_approve)
+    task = await orchestrator.execute(payload.prompt, payload.session_id, payload.selected_host_ids, False)
     return serialize_model(task)
 
 

@@ -1,0 +1,9 @@
+model_list:
+  - model_name: MiniMax-M2.7
+    litellm_params:
+      model: anthropic/MiniMax-M2.7
+      api_base: os.environ/MINIMAX_ANTHROPIC_BASE_URL
+      api_key: os.environ/MINIMAX_API_KEY
+
+litellm_settings:
+  master_key: sk-local-litellm

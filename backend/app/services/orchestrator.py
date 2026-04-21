@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from .llm_router import LLMMessage, registry
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..models.entities import Approval, Host, HostCredential, Service, Task, TaskStep, User
+from .claude_runtime import ClaudeGatewayRuntime
 from .platform import (
     AgentConnector,
     DashboardService,
@@ -27,27 +26,6 @@ from .platform import (
     upsert_audit,
 )
 from .monitoring import MonitoringCoreService
-
-
-def _extract_json_payload(text: str) -> dict[str, Any] | None:
-    if not text:
-        return None
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.S)
-    try:
-        value = json.loads(stripped)
-        return value if isinstance(value, dict) else None
-    except Exception:
-        pass
-    match = re.search(r"\{.*\}", stripped, re.S)
-    if not match:
-        return None
-    try:
-        value = json.loads(match.group(0))
-        return value if isinstance(value, dict) else None
-    except Exception:
-        return None
 
 
 
@@ -118,6 +96,12 @@ class IntentPlan:
     parameters: dict[str, Any]
     explanation: str
     planning_source: str = "fallback"
+    agent_runtime: str = "fallback"
+    gateway_mode: bool = False
+    gateway_provider: str | None = None
+    gateway_model: str | None = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    runtime_errors: list[str] = field(default_factory=list)
 
 
 class ClaudePlanner:
@@ -126,23 +110,21 @@ class ClaudePlanner:
         *,
         prompt: str,
         system_prompt: str,
+        schema: dict[str, Any],
+        session: Session | None = None,
         max_turns: int = 2,
         timeout_seconds: int = 20,
-    ) -> dict[str, Any] | None:
+    ):
         if not settings.claude_enabled:
             return None
-        try:
-            text = await registry.chat_completion(
-                model=settings.model,
-                messages=[
-                    LLMMessage(role="system", content=system_prompt),
-                    LLMMessage(role="user", content=prompt),
-                ],
-                timeout=timeout_seconds,
-            )
-            return _extract_json_payload(text)
-        except Exception:
-            return None
+        return await ClaudeGatewayRuntime.run_json_query(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            schema=schema,
+            session=session,
+            max_turns=max_turns,
+            timeout_seconds=timeout_seconds,
+        )
 
     @classmethod
     async def plan_task(
@@ -156,21 +138,17 @@ class ClaudePlanner:
     ) -> IntentPlan | None:
         recent_tasks = _recent_task_context(session, session_id)
         payload = {
-            "host": {
+            "primary_host": {
                 "id": host.id,
                 "name": host.name,
                 "environment": host.environment,
-                "os_type": host.os_type,
-                "os_version": host.os_version,
-                "package_manager": host.package_manager,
-                "profile": host.profile_json,
-                "metrics": host.metrics_json,
             },
             "selected_host_ids": selected_host_ids,
             "recent_tasks": recent_tasks,
         }
         system_prompt = (
             "You are the planning layer for a Linux operations control plane. "
+            "You do not have embedded host snapshot data. "
             "Return only strict JSON with keys: task_type, action_type, title, goal, "
             "criteria, parameters, explanation. "
             "Allowed action_type values: query_disk, search_files, check_port, query_process, "
@@ -179,26 +157,65 @@ class ClaudePlanner:
             "Allowed task_type values: query, change, diagnose. "
             "If the prompt attempts dangerous filesystem deletion, security config tampering, "
             "or large permission changes, choose the corresponding dangerous action_type. "
-            "criteria must be a list of compact JSON objects."
+            "criteria must be a list of compact JSON objects. "
+            "Before answering, you must use the available MCP host snapshot tool with the selected_host_ids. "
+            "Do not invent host metrics or filesystem details without that tool call."
         )
         result = await cls._run_json_query(
             prompt=f"User request:\n{prompt}\n\nExecution context:\n{json.dumps(payload, ensure_ascii=False)}",
             system_prompt=system_prompt,
+            schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "task_type": {"type": "string", "enum": ["query", "change", "diagnose"]},
+                    "action_type": {
+                        "type": "string",
+                        "enum": [
+                            "query_disk",
+                            "search_files",
+                            "check_port",
+                            "query_process",
+                            "create_linux_user",
+                            "delete_linux_user",
+                            "diagnose_service",
+                            "restart_service",
+                            "kill_process",
+                            "delete_path",
+                            "modify_security_config",
+                            "bulk_permission_change",
+                        ],
+                    },
+                    "title": {"type": "string"},
+                    "goal": {"type": "string"},
+                    "criteria": {"type": "array", "items": {"type": "object"}},
+                    "parameters": {"type": "object"},
+                    "explanation": {"type": "string"},
+                },
+                "required": ["task_type", "action_type", "title", "goal", "criteria", "parameters", "explanation"],
+            },
+            session=session,
             max_turns=2,
-            timeout_seconds=20,
+            timeout_seconds=max(settings.gateway_timeout_seconds, 45),
         )
-        if not result:
+        if not result or not result.payload:
             return None
         try:
             return IntentPlan(
-                task_type=str(result.get("task_type") or "query"),
-                action_type=str(result.get("action_type") or "query_process"),
-                title=str(result.get("title") or "AI 运维任务"),
-                goal=str(result.get("goal") or prompt),
-                criteria=result.get("criteria") if isinstance(result.get("criteria"), list) else [],
-                parameters=result.get("parameters") if isinstance(result.get("parameters"), dict) else {},
-                explanation=str(result.get("explanation") or ""),
-                planning_source=settings.model.split("/")[0],
+                task_type=str(result.payload.get("task_type") or "query"),
+                action_type=str(result.payload.get("action_type") or "query_process"),
+                title=str(result.payload.get("title") or "AI 运维任务"),
+                goal=str(result.payload.get("goal") or prompt),
+                criteria=result.payload.get("criteria") if isinstance(result.payload.get("criteria"), list) else [],
+                parameters=result.payload.get("parameters") if isinstance(result.payload.get("parameters"), dict) else {},
+                explanation=str(result.payload.get("explanation") or ""),
+                planning_source="claude_sdk_gateway",
+                agent_runtime="claude_agent_sdk",
+                gateway_mode=True,
+                gateway_provider=settings.gateway_provider,
+                gateway_model=result.model or settings.gateway_model,
+                tool_calls=result.tool_calls,
+                runtime_errors=result.errors,
             )
         except Exception:
             return None
@@ -234,12 +251,34 @@ class ClaudePlanner:
             "recent_tasks": recent_tasks,
             "observation": observation,
         }
-        return await cls._run_json_query(
+        result = await cls._run_json_query(
             prompt=json.dumps(payload, ensure_ascii=False),
             system_prompt=system_prompt,
+            schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "summary": {"type": "string"},
+                    "root_cause": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "recommended_action_type": {"type": "string", "enum": ["none", "restart_service", "kill_process"]},
+                    "recommended_parameters": {"type": "object"},
+                    "explanation": {"type": "string"},
+                },
+                "required": [
+                    "summary",
+                    "root_cause",
+                    "confidence",
+                    "recommended_action_type",
+                    "recommended_parameters",
+                    "explanation",
+                ],
+            },
+            session=session,
             max_turns=2,
             timeout_seconds=25,
         )
+        return result.payload if result and result.payload else None
 
     @classmethod
     async def explain_result(
@@ -271,11 +310,17 @@ class ClaudePlanner:
         result = await cls._run_json_query(
             prompt=json.dumps(payload, ensure_ascii=False),
             system_prompt=system_prompt,
+            schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
             max_turns=1,
             timeout_seconds=12,
         )
-        if result and isinstance(result.get("summary"), str):
-            return result["summary"].strip()
+        if result and result.payload and isinstance(result.payload.get("summary"), str):
+            return result.payload["summary"].strip()
         return None
 
 
@@ -427,6 +472,12 @@ class GoalDrivenOrchestrator:
                 parameters={"service_name": service_name or "sshd"},
                 explanation="该请求语义上是诊断服务状态，而不是修改安全配置。",
                 planning_source=plan.planning_source,
+                agent_runtime=plan.agent_runtime,
+                gateway_mode=plan.gateway_mode,
+                gateway_provider=plan.gateway_provider,
+                gateway_model=plan.gateway_model,
+                tool_calls=plan.tool_calls,
+                runtime_errors=plan.runtime_errors,
             )
 
         return plan
@@ -527,7 +578,13 @@ class GoalDrivenOrchestrator:
         if action_type == "create_linux_user" and username:
             return await SSHConnector.run(host, credential, f"getent passwd {shlex.quote(str(username))}", timeout_seconds=10)
         if action_type == "delete_linux_user" and username:
-            return await SSHConnector.run(host, credential, f"getent passwd {shlex.quote(str(username))} || true", timeout_seconds=10)
+            result = await SSHConnector.run(host, credential, f"getent passwd {shlex.quote(str(username))}", timeout_seconds=10)
+            return {
+                "success": not result.get("success", False),
+                "exit_code": 0 if not result.get("success", False) else 1,
+                "stdout": "user absent" if not result.get("success", False) else result.get("stdout", ""),
+                "stderr": result.get("stderr", ""),
+            }
         if action_type == "query_disk":
             return await SSHConnector.run(host, credential, "df -h", timeout_seconds=10)
         if action_type == "search_files":
@@ -537,9 +594,15 @@ class GoalDrivenOrchestrator:
         if action_type == "query_process":
             return await self._execute_action(host, credential, action_type, parameters)
         if action_type == "restart_service":
-            return await SSHConnector.run(host, credential, f"systemctl is-active {shlex.quote(service_name)} || true", timeout_seconds=10)
+            return await SSHConnector.run(host, credential, f"systemctl is-active {shlex.quote(service_name)}", timeout_seconds=10)
         if action_type == "kill_process":
-            return await SSHConnector.run(host, credential, f"ps -p {int(parameters['pid'])} || true", timeout_seconds=10)
+            result = await SSHConnector.run(host, credential, f"ps -p {int(parameters['pid'])}", timeout_seconds=10)
+            return {
+                "success": not result.get("success", False),
+                "exit_code": 0 if not result.get("success", False) else 1,
+                "stdout": "process absent" if not result.get("success", False) else result.get("stdout", ""),
+                "stderr": result.get("stderr", ""),
+            }
         return {"success": True, "stdout": "No extra verification required", "stderr": "", "exit_code": 0}
 
     def _create_task(
@@ -902,9 +965,15 @@ class GoalDrivenOrchestrator:
             policy=policy,
             claude_metadata={
                 "claude_enabled": settings.claude_enabled,
-                "credentials_available": _has_claude_credentials(),
-                "used_ai_planning": plan.planning_source == "claude",
+                "credentials_available": ClaudeGatewayRuntime.credentials_available(),
+                "used_ai_planning": plan.agent_runtime == "claude_agent_sdk",
                 "fallback_context_used": bool(plan.parameters.get("_context_reused")),
+                "agent_runtime": plan.agent_runtime,
+                "gateway_mode": plan.gateway_mode,
+                "gateway_provider": plan.gateway_provider,
+                "gateway_model": plan.gateway_model,
+                "tool_calls": plan.tool_calls,
+                "runtime_errors": plan.runtime_errors,
             },
         )
         self._record_step(
@@ -981,6 +1050,8 @@ class GoalDrivenOrchestrator:
         task = self.session.get(Task, approval.task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
+        if approval.status != "pending":
+            raise HTTPException(status_code=409, detail="Approval already decided")
 
         approval.approver_id = approver.id
         approval.status = "approved" if approved else "rejected"

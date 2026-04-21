@@ -197,7 +197,7 @@ export function AgentPanel() {
           <Card type="inner" className="panel-subcard resizable-subcard" title="Agent 上下文">
             <div className="panel-subcard__content">
               <Typography.Text type="secondary">
-                右侧常驻会话面板，当前任务执行链路使用 Claude Agent SDK 做意图规划与结果解释。
+                右侧常驻会话面板，当前任务执行链路使用 Claude Agent SDK 通过 LiteLLM Gateway 调用上游模型，并完成意图规划与结果解释。
               </Typography.Text>
               <Select
                 mode="multiple"

@@ -51,6 +51,7 @@ export function SettingsPage() {
     queryKey: ['integrations'],
     queryFn: fetchIntegrations,
   })
+  const gatewayProvider = data?.providers?.find((provider: any) => provider.key === 'claude-sdk-gateway')
   const { data: validation } = useQuery({
     queryKey: ['pdf-validation'],
     queryFn: fetchPdfValidation,
@@ -164,7 +165,13 @@ export function SettingsPage() {
                 <div className="panel-subcard__content">
                   <Descriptions bordered column={1}>
                     <Descriptions.Item label="前端 API 地址">{API_BASE_URL}</Descriptions.Item>
-                    <Descriptions.Item label="中央编排">Claude Agent SDK + Goal-driven Orchestrator</Descriptions.Item>
+                    <Descriptions.Item label="中央编排">Claude Agent SDK + LiteLLM Gateway + Goal-driven Orchestrator</Descriptions.Item>
+                    <Descriptions.Item label="上游模型">
+                      {gatewayProvider?.stats?.provider ?? 'minimax'} / {gatewayProvider?.stats?.model ?? 'MiniMax-M2.7'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Gateway">
+                      {gatewayProvider?.stats?.base_url ?? 'http://127.0.0.1:4000'}
+                    </Descriptions.Item>
                     <Descriptions.Item label="执行通道">SSH / Node Agent / Hybrid</Descriptions.Item>
                     <Descriptions.Item label="风控">内建策略引擎 + 审批门禁</Descriptions.Item>
                     <Descriptions.Item label="登录模式">首次初始化管理员 + 本地账号体系</Descriptions.Item>

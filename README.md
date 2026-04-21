@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- Claude Agent SDK 中央编排
+- Claude Agent SDK + LiteLLM Gateway 中央编排
 - Goal-driven 任务状态机
 - SSH / Node Agent 双通道执行
 - 内建监控内核：资源快照、历史曲线、高占用进程
@@ -35,13 +35,29 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install \
-  claude-agent-sdk fastapi "uvicorn[standard]" sqlmodel aiosqlite \
+  'litellm[proxy]' claude-agent-sdk fastapi "uvicorn[standard]" sqlmodel aiosqlite \
   asyncssh psutil "python-jose[cryptography]" "passlib[bcrypt]" \
   pydantic-settings httpx orjson
+```
+
+### 2. 启动 LiteLLM Gateway
+
+```bash
+cd /Users/mychanging/Desktop/XFusion-Agent
+. .venv/bin/activate
+export MINIMAX_API_KEY=your-local-minimax-key
+./infra/scripts/run-litellm-gateway.sh
+```
+
+### 3. 启动后端
+
+```bash
+cd /Users/mychanging/Desktop/XFusion-Agent
+. .venv/bin/activate
 PYTHONPATH=backend uvicorn app.main:app --reload --port 8000
 ```
 
-### 2. 前端
+### 4. 前端
 
 ```bash
 cd /Users/mychanging/Desktop/XFusion-Agent/frontend
@@ -49,7 +65,7 @@ npm install
 npm run dev
 ```
 
-### 3. Node Agent
+### 5. Node Agent
 
 ```bash
 cd /Users/mychanging/Desktop/XFusion-Agent
@@ -57,7 +73,7 @@ cd /Users/mychanging/Desktop/XFusion-Agent
 PYTHONPATH=agent uvicorn app.main:app --reload --port 9001
 ```
 
-### 4. Docker Compose
+### 6. Docker Compose
 
 ```bash
 cd /Users/mychanging/Desktop/XFusion-Agent
@@ -70,10 +86,9 @@ docker compose up --build
 - `frontend`
 - `node-agent`
 
-## 默认账号
+## 首次登录
 
-- 用户名：`admin`
-- 密码：`admin123`
+新实例第一次打开时，先访问 `/setup` 初始化管理员账号和密码。系统不会再默认注入固定管理员密码。
 
 ## 主要页面
 
@@ -129,4 +144,4 @@ npx playwright test --config=playwright.config.ts
 
 ## 说明
 
-当前版本对外已经收敛为一体化服务；借鉴过的开源项目只体现在内部设计和模块实现思路里，不再作为产品主界面上的独立服务出现。
+当前版本对外已经收敛为一体化服务；借鉴过的开源项目只体现在内部设计和模块实现思路里，不再作为产品主界面上的独立服务出现。AI 主链现在是 `Claude Agent SDK -> LiteLLM Anthropic-compatible gateway -> MiniMax`。

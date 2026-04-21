@@ -22,7 +22,17 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default=f"sqlite:///{(ROOT_DIR / 'backend' / 'xfusion.db').as_posix()}"
     )
+    agent_mode: str = "claude_sdk_gateway"
     claude_enabled: bool = True
+    claude_model: str = "MiniMax-M2.7"
+    gateway_base_url: str = "http://127.0.0.1:4000"
+    gateway_auth_token: str = "sk-local-litellm"
+    gateway_custom_model_option: str = "MiniMax-M2.7"
+    gateway_custom_model_option_name: str = "MiniMax-M2.7"
+    gateway_custom_model_option_description: str = "MiniMax-M2.7 routed through LiteLLM"
+    gateway_provider: str = "minimax"
+    gateway_model: str = "MiniMax-M2.7"
+    gateway_timeout_seconds: int = 45
     model: str = "anthropic/claude-sonnet-4-6"
     agent_shared_secret: str = "change-me-agent-secret"
     token_expire_minutes: int = 60 * 12
