@@ -191,3 +191,22 @@ export async function fetchHostMonitoringTimeseries(hostId: number, hours = 6) {
   const { data } = await api.get(`/monitoring/hosts/${hostId}/timeseries`, { params: { hours } })
   return data
 }
+
+export interface ProviderInfo {
+  provider_name: string
+  is_configured: boolean
+  models: string[]
+}
+
+export async function fetchProviders(): Promise<ProviderInfo[]> {
+  const { data } = await api.get('/providers')
+  return data
+}
+
+export async function upsertProviderKey(providerName: string, key: string): Promise<void> {
+  await api.put(`/providers/${providerName}/key`, { key })
+}
+
+export async function deleteProviderKey(providerName: string): Promise<void> {
+  await api.delete(`/providers/${providerName}/key`)
+}
