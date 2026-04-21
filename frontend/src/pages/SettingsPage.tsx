@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button,
   Card,
@@ -26,8 +26,10 @@ import {
   fetchCurrentUser,
   fetchIntegrations,
   fetchPdfValidation,
+  fetchRuntimeLlmProfile,
   fetchUsers,
   resetUserPassword,
+  updateRuntimeLlmProfile,
   updateUser,
 } from '../services/api'
 
@@ -46,12 +48,17 @@ export function SettingsPage() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [createUserOpen, setCreateUserOpen] = useState(false)
   const [resetTarget, setResetTarget] = useState<any | null>(null)
+  const [selectedGatewayModel, setSelectedGatewayModel] = useState<string>()
 
   const { data, isLoading } = useQuery({
     queryKey: ['integrations'],
     queryFn: fetchIntegrations,
   })
   const gatewayProvider = data?.providers?.find((provider: any) => provider.key === 'claude-sdk-gateway')
+  const { data: runtimeProfile, isLoading: loadingRuntimeProfile } = useQuery({
+    queryKey: ['runtime-llm-profile'],
+    queryFn: fetchRuntimeLlmProfile,
+  })
   const { data: validation } = useQuery({
     queryKey: ['pdf-validation'],
     queryFn: fetchPdfValidation,
@@ -72,6 +79,12 @@ export function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: ['current-user'] })
   }
 
+  useEffect(() => {
+    if (runtimeProfile?.active?.claude_model) {
+      setSelectedGatewayModel(runtimeProfile.active.claude_model)
+    }
+  }, [runtimeProfile?.active?.claude_model])
+
   const syncMutation = useMutation({
     mutationFn: collectMonitoringSnapshots,
     onSuccess: () => {
@@ -82,6 +95,19 @@ export function SettingsPage() {
     },
     onError: (error: any) => {
       messageApi.error(error?.response?.data?.detail ?? '采集快照失败')
+    },
+  })
+
+  const updateRuntimeProfileMutation = useMutation({
+    mutationFn: ({ modelAlias, provider }: { modelAlias: string; provider?: string }) =>
+      updateRuntimeLlmProfile(modelAlias, provider),
+    onSuccess: () => {
+      messageApi.success('模型切换已生效')
+      queryClient.invalidateQueries({ queryKey: ['runtime-llm-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['integrations'] })
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? '模型切换失败')
     },
   })
 
@@ -145,7 +171,7 @@ export function SettingsPage() {
     },
   })
 
-  if (isLoading || loadingCurrentUser) {
+  if (isLoading || loadingCurrentUser || loadingRuntimeProfile) {
     return <Skeleton active paragraph={{ rows: 12 }} />
   }
 
@@ -167,7 +193,7 @@ export function SettingsPage() {
                     <Descriptions.Item label="前端 API 地址">{API_BASE_URL}</Descriptions.Item>
                     <Descriptions.Item label="中央编排">Claude Agent SDK + LiteLLM Gateway + Goal-driven Orchestrator</Descriptions.Item>
                     <Descriptions.Item label="上游模型">
-                      {gatewayProvider?.stats?.provider ?? 'minimax'} / {gatewayProvider?.stats?.model ?? 'MiniMax-M2.7'}
+                      {runtimeProfile?.active?.gateway_provider ?? gatewayProvider?.stats?.provider ?? 'minimax'} / {runtimeProfile?.active?.gateway_model ?? gatewayProvider?.stats?.model ?? 'MiniMax-M2.7'}
                     </Descriptions.Item>
                     <Descriptions.Item label="Gateway">
                       {gatewayProvider?.stats?.base_url ?? 'http://127.0.0.1:4000'}
@@ -176,6 +202,32 @@ export function SettingsPage() {
                     <Descriptions.Item label="风控">内建策略引擎 + 审批门禁</Descriptions.Item>
                     <Descriptions.Item label="登录模式">首次初始化管理员 + 本地账号体系</Descriptions.Item>
                   </Descriptions>
+                  <div style={{ marginTop: 16 }}>
+                    <Typography.Text strong>模型自由切换</Typography.Text>
+                    <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <Select
+                        style={{ width: 220 }}
+                        value={selectedGatewayModel}
+                        options={(runtimeProfile?.available_models ?? []).map((model: string) => ({ value: model, label: model }))}
+                        onChange={setSelectedGatewayModel}
+                      />
+                      <Button
+                        type="primary"
+                        disabled={!isAdmin || !selectedGatewayModel || selectedGatewayModel === runtimeProfile?.active?.claude_model}
+                        loading={updateRuntimeProfileMutation.isPending}
+                        onClick={() => {
+                          if (!selectedGatewayModel) return
+                          const provider = selectedGatewayModel.startsWith('GLM') ? 'zhipu' : selectedGatewayModel.startsWith('MiniMax') ? 'minimax' : undefined
+                          updateRuntimeProfileMutation.mutate({ modelAlias: selectedGatewayModel, provider })
+                        }}
+                      >
+                        切换模型
+                      </Button>
+                    </div>
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                      当前支持的 gateway aliases 会直接从 LiteLLM 读取。切换后新任务立即按新模型执行，无需重启后端。
+                    </Typography.Paragraph>
+                  </div>
                 </div>
               </Card>
 

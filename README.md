@@ -46,8 +46,30 @@ python -m pip install \
 cd /Users/mychanging/Desktop/XFusion-Agent
 . .venv/bin/activate
 export MINIMAX_API_KEY=your-local-minimax-key
+# 或者:
+# export ZHIPU_API_KEY=your-local-zhipu-key
 ./infra/scripts/run-litellm-gateway.sh
 ```
+
+当前 gateway 默认支持两个别名：
+
+- `MiniMax-M2.7`
+- `GLM-4.5`
+
+如果要把后端主模型切到 GLM，需要把本地环境变量中的以下几项改成同一个 alias：
+
+```bash
+export XFUSION_CLAUDE_MODEL=GLM-4.5
+export XFUSION_GATEWAY_CUSTOM_MODEL_OPTION=GLM-4.5
+export XFUSION_GATEWAY_CUSTOM_MODEL_OPTION_NAME=GLM-4.5
+export XFUSION_GATEWAY_PROVIDER=zhipu
+export XFUSION_GATEWAY_MODEL=GLM-4.5
+```
+
+说明：
+
+- LiteLLM 内部对 GLM 使用的是 `zai/glm-4.5`
+- 启动脚本会把你提供的 `ZHIPU_API_KEY / ZHIPU_API_BASE` 自动映射成 LiteLLM 所需的 `ZAI_API_KEY / ZAI_API_BASE`
 
 ### 3. 启动后端
 
@@ -144,4 +166,4 @@ npx playwright test --config=playwright.config.ts
 
 ## 说明
 
-当前版本对外已经收敛为一体化服务；借鉴过的开源项目只体现在内部设计和模块实现思路里，不再作为产品主界面上的独立服务出现。AI 主链现在是 `Claude Agent SDK -> LiteLLM Anthropic-compatible gateway -> MiniMax`。
+当前版本对外已经收敛为一体化服务；借鉴过的开源项目只体现在内部设计和模块实现思路里，不再作为产品主界面上的独立服务出现。AI 主链现在是 `Claude Agent SDK -> LiteLLM-compatible gateway -> provider model`，当前已经验证过 `MiniMax-M2.7` 和 `GLM-4.5`。

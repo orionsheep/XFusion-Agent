@@ -18,10 +18,12 @@ from ..schemas.api import (
     LoginResponse,
     PasswordChangeRequest,
     PasswordResetRequest,
+    RuntimeProfileUpdateRequest,
     TaskExecuteRequest,
     UserCreateRequest,
     UserUpdateRequest,
 )
+from ..services.claude_runtime import ClaudeGatewayRuntime
 from ..services.platform import (
     DashboardService,
     HostInspector,
@@ -129,6 +131,38 @@ def change_password(
     session.commit()
     upsert_audit(session, actor_id=current_user.id, event_type="user_password_changed", payload={"user_id": current_user.id})
     return {"ok": True}
+
+
+@router.get("/runtime/llm-profile")
+def get_runtime_llm_profile(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    health = ClaudeGatewayRuntime.healthcheck()
+    return {
+        "active": ClaudeGatewayRuntime.current_profile(),
+        "available_models": ClaudeGatewayRuntime.available_models(),
+        "gateway": health,
+    }
+
+
+@router.put("/runtime/llm-profile")
+def update_runtime_llm_profile(
+    payload: RuntimeProfileUpdateRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin"))],
+) -> dict:
+    profile = ClaudeGatewayRuntime.save_profile(model_alias=payload.model_alias, provider=payload.provider)
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        event_type="runtime_profile_updated",
+        payload={"runtime_profile": profile},
+    )
+    return {
+        "active": profile,
+        "available_models": ClaudeGatewayRuntime.available_models(),
+        "gateway": ClaudeGatewayRuntime.healthcheck(),
+    }
 
 
 @router.get("/users")

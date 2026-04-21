@@ -177,6 +177,16 @@ export async function fetchIntegrations() {
   return data
 }
 
+export async function fetchRuntimeLlmProfile() {
+  const { data } = await api.get('/runtime/llm-profile')
+  return data
+}
+
+export async function updateRuntimeLlmProfile(modelAlias: string, provider?: string) {
+  const { data } = await api.put('/runtime/llm-profile', { model_alias: modelAlias, provider })
+  return data
+}
+
 export async function collectMonitoringSnapshots() {
   const { data } = await api.post('/monitoring/collect')
   return data

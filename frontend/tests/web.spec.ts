@@ -51,6 +51,8 @@ test('dashboard, tasks, and settings show PDF-facing capabilities', async ({ pag
   await page.goto('/settings')
   await expect(page.getByText('当前账号')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('账号与权限')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('模型自由切换')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: '切换模型' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('PDF 要求覆盖')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('高风险识别、预警、二次确认、拒绝非法请求')).toBeVisible({ timeout: 15_000 })
   await page.screenshot({ path: '/tmp/xfusion-settings-pdf.png', fullPage: true })
@@ -96,6 +98,19 @@ test('tasks execute through claude sdk gateway and record provider metadata', as
   expect(login.ok()).toBeTruthy()
   const { access_token } = await login.json()
 
+  const switchProfile = await request.put('http://127.0.0.1:8000/api/runtime/llm-profile', {
+    headers: {
+      Authorization: `Bearer ${access_token}`,
+      'Content-Type': 'application/json',
+    },
+    data: {
+      model_alias: 'GLM-4.5',
+      provider: 'zhipu',
+    },
+  })
+
+  expect(switchProfile.ok()).toBeTruthy()
+
   const execute = await request.post('http://127.0.0.1:8000/api/tasks/execute', {
     headers: {
       Authorization: `Bearer ${access_token}`,
@@ -113,7 +128,8 @@ test('tasks execute through claude sdk gateway and record provider metadata', as
   expect(task.status).toBe('succeeded')
   expect(task.plan_json.ai.agent_runtime).toBe('claude_agent_sdk')
   expect(task.plan_json.ai.gateway_mode).toBeTruthy()
-  expect(task.plan_json.ai.gateway_provider).toBe('minimax')
+  expect(task.plan_json.ai.gateway_provider).toBe('zhipu')
+  expect(task.plan_json.ai.gateway_model).toBe('GLM-4.5')
   expect(task.plan_json.ai.tool_calls.length).toBeGreaterThan(0)
   expect(task.result_json.per_host[0].success).toBeTruthy()
 })

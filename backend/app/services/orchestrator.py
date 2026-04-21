@@ -200,6 +200,7 @@ class ClaudePlanner:
         )
         if not result or not result.payload:
             return None
+        runtime_profile = ClaudeGatewayRuntime.current_profile()
         try:
             return IntentPlan(
                 task_type=str(result.payload.get("task_type") or "query"),
@@ -212,8 +213,8 @@ class ClaudePlanner:
                 planning_source="claude_sdk_gateway",
                 agent_runtime="claude_agent_sdk",
                 gateway_mode=True,
-                gateway_provider=settings.gateway_provider,
-                gateway_model=result.model or settings.gateway_model,
+                gateway_provider=runtime_profile.get("gateway_provider"),
+                gateway_model=result.model or runtime_profile.get("gateway_model"),
                 tool_calls=result.tool_calls,
                 runtime_errors=result.errors,
             )

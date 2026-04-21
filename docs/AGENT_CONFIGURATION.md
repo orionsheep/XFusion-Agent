@@ -3,6 +3,7 @@
 ## 架构角色
 
 - 中央控制平面：`Claude Agent SDK + LiteLLM Gateway`
+- 已验证 gateway aliases：`MiniMax-M2.7`、`GLM-4.5`
 - 执行通道：`SSHConnector` / `Node Agent`
 - 风险判定：`内建策略核心`
 - 任务模型：`GoalDrivenOrchestrator`

@@ -47,6 +47,11 @@ class PasswordResetRequest(BaseModel):
     new_password: str
 
 
+class RuntimeProfileUpdateRequest(BaseModel):
+    model_alias: str
+    provider: str | None = None
+
+
 class HostCreate(BaseModel):
     name: str
     address: str

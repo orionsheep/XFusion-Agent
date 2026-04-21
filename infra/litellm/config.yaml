@@ -4,6 +4,12 @@ model_list:
       model: anthropic/MiniMax-M2.7
       api_base: os.environ/MINIMAX_ANTHROPIC_BASE_URL
       api_key: os.environ/MINIMAX_API_KEY
+  - model_name: GLM-4.5
+    litellm_params:
+      model: zai/glm-4.5
+      api_base: os.environ/ZAI_API_BASE
+      api_key: os.environ/ZAI_API_KEY
 
 litellm_settings:
   master_key: sk-local-litellm
+  drop_params: true

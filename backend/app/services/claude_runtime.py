@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -10,12 +11,23 @@ from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, t
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, ToolUseBlock
 from sqlmodel import Session, select
 
-from ..core.config import get_settings
+from ..core.config import ROOT_DIR, get_settings
 from ..models.entities import Host, Service
 from .platform import DashboardService, HostRepository, jsonable
 
 
 settings = get_settings()
+RUNTIME_PROFILE_PATH = ROOT_DIR / "backend" / "runtime_profile.json"
+SUPPORTED_GATEWAY_ALIASES: dict[str, dict[str, str]] = {
+    "MiniMax-M2.7": {
+        "provider": "minimax",
+        "description": "MiniMax-M2.7 routed through LiteLLM",
+    },
+    "GLM-4.5": {
+        "provider": "zhipu",
+        "description": "GLM-4.5 routed through LiteLLM",
+    },
+}
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
@@ -47,31 +59,101 @@ class ClaudeJsonResult:
 
 class ClaudeGatewayRuntime:
     @staticmethod
+    def _default_profile() -> dict[str, Any]:
+        description = SUPPORTED_GATEWAY_ALIASES.get(
+            settings.claude_model,
+            {"description": settings.gateway_custom_model_option_description},
+        )["description"]
+        return {
+            "claude_model": settings.claude_model,
+            "gateway_custom_model_option": settings.gateway_custom_model_option,
+            "gateway_custom_model_option_name": settings.gateway_custom_model_option_name,
+            "gateway_custom_model_option_description": description,
+            "gateway_provider": settings.gateway_provider,
+            "gateway_model": settings.gateway_model,
+        }
+
+    @staticmethod
+    def current_profile() -> dict[str, Any]:
+        profile = ClaudeGatewayRuntime._default_profile()
+        if RUNTIME_PROFILE_PATH.exists():
+            try:
+                data = json.loads(RUNTIME_PROFILE_PATH.read_text())
+                if isinstance(data, dict):
+                    profile.update({key: value for key, value in data.items() if value})
+            except Exception:
+                pass
+        alias = str(profile.get("claude_model") or profile.get("gateway_model") or settings.claude_model)
+        defaults = SUPPORTED_GATEWAY_ALIASES.get(alias, {})
+        profile["claude_model"] = alias
+        profile["gateway_custom_model_option"] = alias
+        profile["gateway_custom_model_option_name"] = alias
+        profile["gateway_custom_model_option_description"] = defaults.get(
+            "description",
+            profile.get("gateway_custom_model_option_description") or f"{alias} routed through LiteLLM",
+        )
+        profile["gateway_provider"] = profile.get("gateway_provider") or defaults.get("provider") or settings.gateway_provider
+        profile["gateway_model"] = profile.get("gateway_model") or alias
+        return profile
+
+    @staticmethod
+    def save_profile(*, model_alias: str, provider: str | None = None) -> dict[str, Any]:
+        alias = model_alias.strip()
+        if not alias:
+            raise ValueError("model_alias is required")
+        defaults = SUPPORTED_GATEWAY_ALIASES.get(alias, {})
+        payload = {
+            "claude_model": alias,
+            "gateway_custom_model_option": alias,
+            "gateway_custom_model_option_name": alias,
+            "gateway_custom_model_option_description": defaults.get("description", f"{alias} routed through LiteLLM"),
+            "gateway_provider": provider or defaults.get("provider") or settings.gateway_provider,
+            "gateway_model": alias,
+        }
+        RUNTIME_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_PROFILE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        return ClaudeGatewayRuntime.current_profile()
+
+    @staticmethod
+    def available_models() -> list[str]:
+        models = list(SUPPORTED_GATEWAY_ALIASES.keys())
+        try:
+            status = ClaudeGatewayRuntime.healthcheck()
+            for model in status.get("models") or []:
+                if isinstance(model, str) and model not in models:
+                    models.append(model)
+        except Exception:
+            pass
+        return models
+
+    @staticmethod
     def enabled() -> bool:
         return settings.claude_enabled and settings.agent_mode == "claude_sdk_gateway"
 
     @staticmethod
     def credentials_available() -> bool:
+        profile = ClaudeGatewayRuntime.current_profile()
         return bool(
             ClaudeGatewayRuntime.enabled()
             and settings.gateway_base_url
             and settings.gateway_auth_token
-            and settings.claude_model
+            and profile.get("claude_model")
         )
 
     @staticmethod
     def environment() -> dict[str, str]:
+        profile = ClaudeGatewayRuntime.current_profile()
         env = {
             "ANTHROPIC_BASE_URL": settings.gateway_base_url.rstrip("/"),
             "ANTHROPIC_AUTH_TOKEN": settings.gateway_auth_token,
-            "ANTHROPIC_CUSTOM_MODEL_OPTION": settings.gateway_custom_model_option,
-            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": settings.gateway_custom_model_option_name,
-            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": settings.gateway_custom_model_option_description,
-            "ANTHROPIC_MODEL": settings.claude_model,
-            "ANTHROPIC_SMALL_FAST_MODEL": settings.claude_model,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": settings.claude_model,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": settings.claude_model,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": settings.claude_model,
+            "ANTHROPIC_CUSTOM_MODEL_OPTION": profile["gateway_custom_model_option"],
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": profile["gateway_custom_model_option_name"],
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": profile["gateway_custom_model_option_description"],
+            "ANTHROPIC_MODEL": profile["claude_model"],
+            "ANTHROPIC_SMALL_FAST_MODEL": profile["claude_model"],
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": profile["claude_model"],
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": profile["claude_model"],
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": profile["claude_model"],
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "API_TIMEOUT_MS": str(settings.gateway_timeout_seconds * 1000),
         }
@@ -79,12 +161,13 @@ class ClaudeGatewayRuntime:
 
     @staticmethod
     def healthcheck() -> dict[str, Any]:
+        profile = ClaudeGatewayRuntime.current_profile()
         if not ClaudeGatewayRuntime.enabled():
             return {
                 "enabled": False,
                 "reachable": False,
-                "provider": settings.gateway_provider,
-                "model": settings.gateway_model,
+                "provider": profile["gateway_provider"],
+                "model": profile["gateway_model"],
                 "base_url": settings.gateway_base_url,
                 "reason": "gateway disabled",
             }
@@ -92,8 +175,8 @@ class ClaudeGatewayRuntime:
             return {
                 "enabled": True,
                 "reachable": False,
-                "provider": settings.gateway_provider,
-                "model": settings.gateway_model,
+                "provider": profile["gateway_provider"],
+                "model": profile["gateway_model"],
                 "base_url": settings.gateway_base_url,
                 "reason": "missing gateway credentials",
             }
@@ -112,8 +195,8 @@ class ClaudeGatewayRuntime:
                     return {
                         "enabled": True,
                         "reachable": True,
-                        "provider": settings.gateway_provider,
-                        "model": settings.gateway_model,
+                        "provider": profile["gateway_provider"],
+                        "model": profile["gateway_model"],
                         "base_url": settings.gateway_base_url,
                         "models": model_names,
                         "model_count": len(model_names),
@@ -124,8 +207,8 @@ class ClaudeGatewayRuntime:
         return {
             "enabled": True,
             "reachable": False,
-            "provider": settings.gateway_provider,
-            "model": settings.gateway_model,
+            "provider": profile["gateway_provider"],
+            "model": profile["gateway_model"],
             "base_url": settings.gateway_base_url,
             "reason": locals().get("last_error", "unreachable"),
         }
@@ -231,8 +314,9 @@ class ClaudeGatewayRuntime:
         if session is not None:
             mcp_servers["xfusion-control-plane"] = ClaudeGatewayRuntime.build_control_plane_mcp_server(session)
 
+        profile = ClaudeGatewayRuntime.current_profile()
         options = ClaudeAgentOptions(
-            model=settings.claude_model,
+            model=profile["claude_model"],
             system_prompt=system_prompt,
             permission_mode="bypassPermissions",
             max_turns=max(max_turns, 4),
@@ -284,16 +368,24 @@ class ClaudeGatewayRuntime:
                 payload=structured_output or _extract_json_payload(raw_text),
                 raw_text=raw_text,
                 tool_calls=tool_calls,
-                model=model_name or settings.claude_model,
+                model=model_name or profile["claude_model"],
                 session_id=session_id,
                 errors=errors,
             )
 
-        try:
-            effective_timeout = timeout_seconds or settings.gateway_timeout_seconds
-            return await asyncio.wait_for(
-                _run(),
-                timeout=effective_timeout,
-            )
-        except Exception:
-            return None
+        effective_timeout = timeout_seconds or settings.gateway_timeout_seconds
+        last_result: ClaudeJsonResult | None = None
+        for attempt in range(2):
+            try:
+                result = await asyncio.wait_for(
+                    _run(),
+                    timeout=effective_timeout,
+                )
+                if result.payload is not None or result.tool_calls:
+                    return result
+                last_result = result
+            except Exception as exc:
+                last_result = ClaudeJsonResult(payload=None, errors=[str(exc)])
+            if attempt == 0:
+                await asyncio.sleep(0.35)
+        return last_result

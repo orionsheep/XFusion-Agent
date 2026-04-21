@@ -24,7 +24,7 @@ class CapabilityCatalog:
                 "key": "claude-sdk-gateway",
                 "name": "Claude Agent SDK Gateway",
                 "category": "ai-runtime",
-                "description": "Claude Agent SDK 通过 LiteLLM Anthropic-compatible gateway 路由到 MiniMax。",
+                "description": "Claude Agent SDK 通过 LiteLLM-compatible gateway 路由到上游模型（当前已接 MiniMax / GLM）。",
                 "status": {
                     "enabled": bool(gateway_status.get("enabled")),
                     "reachable": bool(gateway_status.get("reachable")),

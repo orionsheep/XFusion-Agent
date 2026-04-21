@@ -11,6 +11,7 @@ __pycache__/
 *.pyc
 .env
 backend/.env
+backend/runtime_profile.json
 *.db
 *.sqlite
 *.sqlite3
