@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from ..core.database import get_session
-from ..models.entities import AgentNode, Approval, AuditLog, Host, Service, Task, TaskStep, User
+from ..models.entities import AgentNode, Approval, AuditLog, Host, ProviderKey, Service, Task, TaskStep, User
 from ..schemas.api import (
     AgentHeartbeatRequest,
     AgentRegistrationRequest,
@@ -18,6 +20,7 @@ from ..schemas.api import (
     LoginResponse,
     PasswordChangeRequest,
     PasswordResetRequest,
+    ProviderKeyUpsertRequest,
     TaskExecuteRequest,
     UserCreateRequest,
     UserUpdateRequest,
@@ -37,10 +40,13 @@ from ..services.orchestrator import GoalDrivenOrchestrator, build_validation_mat
 from ..services.security import (
     authenticate_user,
     create_access_token,
+    decrypt_secret,
+    encrypt_secret,
     get_current_user,
     hash_password,
     require_roles,
 )
+from ..services.llm_router import registry
 
 
 router = APIRouter()
@@ -372,7 +378,13 @@ async def execute_task(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     orchestrator = GoalDrivenOrchestrator(session, current_user)
-    task = await orchestrator.execute(payload.prompt, payload.session_id, payload.selected_host_ids, payload.auto_approve)
+    task = await orchestrator.execute(
+        payload.prompt,
+        payload.session_id,
+        payload.selected_host_ids,
+        payload.auto_approve,
+        model=payload.model,
+    )
     return serialize_model(task)
 
 
@@ -515,3 +527,76 @@ def agent_heartbeat(
             ServiceSync.sync(session, host, payload.services)
     session.commit()
     return {"status": "ok"}
+
+
+@router.get("/providers")
+def list_providers(
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict]:
+    user_keys = {
+        row.provider_name
+        for row in session.exec(
+            select(ProviderKey).where(ProviderKey.user_id == current_user.id)
+        ).all()
+    }
+    result = []
+    for info in registry.list_provider_info():
+        env_available = bool(info["env_key"] and os.environ.get(info["env_key"]))
+        is_configured = info["provider_name"] in user_keys or env_available
+        result.append({
+            "provider_name": info["provider_name"],
+            "is_configured": is_configured,
+            "models": info["models"],
+        })
+    return result
+
+
+@router.put("/providers/{provider_name}/key")
+def upsert_provider_key(
+    provider_name: str,
+    payload: ProviderKeyUpsertRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    known = {info["provider_name"] for info in registry.list_provider_info()}
+    if provider_name not in known:
+        raise HTTPException(status_code=404, detail=f"未知 provider: {provider_name}")
+    existing = session.exec(
+        select(ProviderKey).where(
+            ProviderKey.user_id == current_user.id,
+            ProviderKey.provider_name == provider_name,
+        )
+    ).first()
+    if existing:
+        existing.encrypted_key = encrypt_secret(payload.key)
+        existing.updated_at = datetime.now(timezone.utc)
+        session.add(existing)
+    else:
+        session.add(ProviderKey(
+            user_id=current_user.id,
+            provider_name=provider_name,
+            encrypted_key=encrypt_secret(payload.key),
+            updated_at=datetime.now(timezone.utc),
+        ))
+    session.commit()
+    return {"ok": True, "provider_name": provider_name}
+
+
+@router.delete("/providers/{provider_name}/key")
+def delete_provider_key(
+    provider_name: str,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    existing = session.exec(
+        select(ProviderKey).where(
+            ProviderKey.user_id == current_user.id,
+            ProviderKey.provider_name == provider_name,
+        )
+    ).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="未配置该 provider 的 Key")
+    session.delete(existing)
+    session.commit()
+    return {"ok": True}
