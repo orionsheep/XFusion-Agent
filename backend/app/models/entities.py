@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import JSON, Column
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 def utcnow() -> datetime:
@@ -153,3 +153,14 @@ class HostMetricSample(SQLModel, table=True):
     top_processes: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     source: str = "control-plane"
     sampled_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ProviderKey(SQLModel, table=True):
+    __tablename__ = "provider_keys"
+    __table_args__ = (UniqueConstraint("user_id", "provider_name"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    provider_name: str = Field(max_length=64)
+    encrypted_key: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
