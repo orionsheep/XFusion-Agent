@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir fastapi httpx psutil "uvicorn[standard]"
+RUN pip install --no-cache-dir \
+  --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  fastapi httpx psutil "uvicorn[standard]"
 
 COPY agent /app/agent
 

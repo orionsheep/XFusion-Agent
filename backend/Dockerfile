@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY backend/pyproject.toml /app/pyproject.toml
 RUN pip install --no-cache-dir \
+  --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
   aiosqlite asyncssh claude-agent-sdk fastapi httpx orjson \
   "passlib[bcrypt]" psutil pydantic-settings "python-jose[cryptography]" \
   python-multipart sqlmodel "uvicorn[standard]"
