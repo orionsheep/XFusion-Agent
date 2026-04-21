@@ -14,6 +14,8 @@ import {
   message,
 } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useAgentConsole } from './AgentConsoleContext'
 import {
   executeTask,
@@ -53,6 +55,12 @@ function formatTimestamp(value?: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function ensureMarkdown(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  return trimmed
 }
 
 export function AgentPanel() {
@@ -365,12 +373,14 @@ export function AgentPanel() {
                 <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 8 }}>
                   {task.title}
                 </Typography.Title>
-                <Typography.Paragraph style={{ marginBottom: 0 }}>
-                  {visibleSummary}
+                <div className="agent-message__richtext">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {ensureMarkdown(visibleSummary)}
+                  </ReactMarkdown>
                   {task.id === streamingTaskId && visibleSummary.length < finalSummary.length ? (
                     <span className="agent-message__cursor" aria-hidden="true">▍</span>
                   ) : null}
-                </Typography.Paragraph>
+                </div>
                 {(toolCalls.length || perHost.length) ? (
                   <details className="agent-message__details">
                     <summary>执行细节</summary>

@@ -1261,6 +1261,92 @@ body::before {
   border-style: dashed;
 }
 
+.agent-message__richtext {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.agent-message__richtext > *:first-child {
+  margin-top: 0;
+}
+
+.agent-message__richtext > *:last-child {
+  margin-bottom: 0;
+}
+
+.agent-message__richtext h1,
+.agent-message__richtext h2,
+.agent-message__richtext h3,
+.agent-message__richtext h4 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.agent-message__richtext p,
+.agent-message__richtext ul,
+.agent-message__richtext ol,
+.agent-message__richtext blockquote,
+.agent-message__richtext pre,
+.agent-message__richtext table {
+  margin: 0 0 12px;
+}
+
+.agent-message__richtext ul,
+.agent-message__richtext ol {
+  padding-left: 20px;
+}
+
+.agent-message__richtext li + li {
+  margin-top: 4px;
+}
+
+.agent-message__richtext code {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.06);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+
+.agent-message__richtext pre {
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.agent-message__richtext pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.agent-message__richtext blockquote {
+  padding-left: 12px;
+  border-left: 3px solid rgba(15, 118, 110, 0.24);
+  color: #475569;
+}
+
+.agent-message__richtext table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+
+.agent-message__richtext th,
+.agent-message__richtext td {
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-message__richtext th {
+  background: rgba(15, 23, 42, 0.04);
+}
+
 .agent-message__phase-caption {
   display: inline-block;
   margin-top: 8px;
