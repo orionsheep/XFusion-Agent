@@ -45,6 +45,282 @@ def _safe_token(value: str | None) -> str:
     return shlex.quote((value or "").strip())
 
 
+def _parse_df_output(stdout: str) -> list[dict[str, Any]]:
+    lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+    header = re.split(r"\s+", lines[0])
+    if len(header) < 6 or "Mounted" not in lines[0]:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines[1:]:
+        parts = re.split(r"\s+", line)
+        if len(parts) < 6:
+            continue
+        filesystem, size, used, avail, percent, mount = parts[:6]
+        try:
+            used_percent = int(percent.rstrip("%"))
+        except Exception:
+            used_percent = None
+        rows.append(
+            {
+                "filesystem": filesystem,
+                "size": size,
+                "used": used,
+                "avail": avail,
+                "use_percent": used_percent,
+                "mount": mount,
+            }
+        )
+    return rows
+
+
+def _risk_level_for_usage(usage: int | None) -> str:
+    if usage is None:
+        return "unknown"
+    if usage >= 85:
+        return "critical"
+    if usage >= 70:
+        return "warning"
+    return "healthy"
+
+
+def _risk_label(level: str) -> str:
+    return {
+        "critical": "高风险",
+        "warning": "关注",
+        "healthy": "稳定",
+        "unknown": "未知",
+    }.get(level, "未知")
+
+
+def _looks_transient_transport_error(result: dict[str, Any]) -> bool:
+    stderr = str(result.get("stderr") or "").lower()
+    exit_code = result.get("exit_code")
+    return exit_code in {124, 255} or "connection lost" in stderr or "timed out" in stderr
+
+
+def _host_status_line(result: dict[str, Any]) -> str:
+    return f"{result['host_name']}:{'成功' if result['success'] else '失败'}"
+
+
+def _extract_disk_host_fact(item: dict[str, Any]) -> dict[str, Any]:
+    rows = _parse_df_output(((item.get("action_result") or {}).get("stdout") or ""))
+    root = next((row for row in rows if row.get("mount") == "/"), rows[0] if rows else None)
+    notable = [
+        row for row in rows
+        if row.get("use_percent") is not None and row.get("use_percent", 0) >= 70
+    ]
+    risk = _risk_level_for_usage(root.get("use_percent") if root else None)
+    return {
+        "host_id": item.get("host_id"),
+        "host_name": item.get("host_name"),
+        "rows": rows,
+        "root": root,
+        "notable": notable,
+        "risk": risk,
+        "success": item.get("success", False),
+        "stderr": ((item.get("action_result") or {}).get("stderr") or "").strip(),
+    }
+
+
+def _build_disk_report(per_host_results: list[dict[str, Any]], prompt: str) -> tuple[str, dict[str, Any], str]:
+    host_facts = [_extract_disk_host_fact(item) for item in per_host_results]
+    critical_hosts = [fact for fact in host_facts if fact["risk"] == "critical"]
+    warning_hosts = [fact for fact in host_facts if fact["risk"] == "warning"]
+    healthy_hosts = [fact for fact in host_facts if fact["risk"] == "healthy"]
+    failed_hosts = [fact for fact in host_facts if not fact["success"]]
+
+    headline_parts: list[str] = []
+    if critical_hosts:
+        headline_parts.append(
+            f"{len(critical_hosts)} 台主机已进入高风险区："
+            + "、".join(
+                f"{fact['host_name']}({fact['root']['use_percent']}%)"
+                for fact in critical_hosts
+                if fact.get("root")
+            )
+        )
+    if warning_hosts:
+        headline_parts.append(
+            f"{len(warning_hosts)} 台主机需要关注："
+            + "、".join(
+                f"{fact['host_name']}({fact['root']['use_percent']}%)"
+                for fact in warning_hosts
+                if fact.get("root")
+            )
+        )
+    if failed_hosts:
+        headline_parts.append(
+            f"{len(failed_hosts)} 台主机采集失败："
+            + "、".join(fact["host_name"] for fact in failed_hosts)
+        )
+    if not headline_parts:
+        headline_parts.append(f"{len(healthy_hosts)} 台主机当前都处于安全区。")
+    summary = "；".join(headline_parts)
+
+    lines = [
+        "# 硬盘使用情况分析报告",
+        "",
+        "## 执行摘要",
+        f"- 请求：{prompt}",
+        f"- 检查主机数：{len(per_host_results)}",
+        f"- 结论：{summary}",
+        "",
+        "## 风险概览",
+        f"- 高风险：{len(critical_hosts)} 台",
+        f"- 关注：{len(warning_hosts)} 台",
+        f"- 稳定：{len(healthy_hosts)} 台",
+        f"- 采集失败：{len(failed_hosts)} 台",
+        "",
+        "## 逐主机分析",
+    ]
+
+    for fact in host_facts:
+        root = fact.get("root")
+        lines.extend(
+            [
+                "",
+                f"### {fact['host_name']}",
+                f"- 状态：{_risk_label(fact['risk'])}",
+            ]
+        )
+        if root:
+            lines.extend(
+                [
+                    f"- 根分区：已用 {root['used']} / 总量 {root['size']} / 可用 {root['avail']} / 使用率 {root['use_percent']}%",
+                ]
+            )
+        if fact["notable"]:
+            lines.append("- 重点分区：")
+            lines.append("")
+            lines.append("| 挂载点 | 已用 | 总量 | 可用 | 使用率 |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            for row in fact["notable"]:
+                lines.append(
+                    f"| {row['mount']} | {row['used']} | {row['size']} | {row['avail']} | {row['use_percent']}% |"
+                )
+        elif fact["rows"]:
+            top_rows = fact["rows"][:4]
+            lines.append("- 主要分区：")
+            lines.append("")
+            lines.append("| 挂载点 | 已用 | 总量 | 可用 | 使用率 |")
+            lines.append("| --- | --- | --- | --- | --- |")
+            for row in top_rows:
+                percent = f"{row['use_percent']}%" if row["use_percent"] is not None else "-"
+                lines.append(
+                    f"| {row['mount']} | {row['used']} | {row['size']} | {row['avail']} | {percent} |"
+                )
+        if fact["stderr"]:
+            lines.extend(["", f"> stderr: {fact['stderr']}"])
+
+    lines.extend(
+        [
+            "",
+            "## 建议动作",
+        ]
+    )
+    if critical_hosts:
+        for fact in critical_hosts:
+            root = fact.get("root")
+            usage_text = f"{root['use_percent']}%" if root else "未知"
+            lines.append(f"- 优先处理 `{fact['host_name']}`：根分区已到 {usage_text}，建议立即清理大文件、日志和历史包。")
+    elif warning_hosts:
+        for fact in warning_hosts:
+            root = fact.get("root")
+            usage_text = f"{root['use_percent']}%" if root else "未知"
+            lines.append(f"- 关注 `{fact['host_name']}`：当前使用率 {usage_text}，建议安排容量巡检。")
+    else:
+        lines.append("- 当前没有主机进入危险区，继续保持常规巡检即可。")
+
+    meta = {
+        "host_count": len(per_host_results),
+        "success_count": sum(1 for item in per_host_results if item.get("success")),
+        "failed_count": sum(1 for item in per_host_results if not item.get("success")),
+        "risk_hosts": [fact["host_name"] for fact in critical_hosts + warning_hosts],
+        "primary_metrics": {
+            "critical_hosts": len(critical_hosts),
+            "warning_hosts": len(warning_hosts),
+            "healthy_hosts": len(healthy_hosts),
+        },
+    }
+    return "\n".join(lines).strip(), meta, summary
+
+
+def _build_generic_report(
+    *,
+    plan: "IntentPlan",
+    prompt: str,
+    per_host_results: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any], str]:
+    success_count = sum(1 for item in per_host_results if item.get("success"))
+    failed_count = len(per_host_results) - success_count
+    summary = (
+        f"{plan.title}已在 {len(per_host_results)} 台主机上执行；"
+        + "，".join(_host_status_line(item) for item in per_host_results)
+    )
+    lines = [
+        f"# {plan.title}",
+        "",
+        "## 执行摘要",
+        f"- 请求：{prompt}",
+        f"- 动作：`{plan.action_type}`",
+        f"- 主机数：{len(per_host_results)}",
+        f"- 成功：{success_count}",
+        f"- 失败：{failed_count}",
+        "",
+        "## 逐主机结果",
+    ]
+    for item in per_host_results:
+        action_result = item.get("action_result") or {}
+        stdout = (action_result.get("stdout") or "").strip()
+        stderr = (action_result.get("stderr") or "").strip()
+        lines.extend(
+            [
+                "",
+                f"### {item['host_name']}",
+                f"- 状态：{'成功' if item.get('success') else '失败'}",
+            ]
+        )
+        if stdout:
+            lines.extend(["- 输出：", "", "```text", stdout[:4000], "```"])
+        if stderr:
+            lines.extend(["- 错误输出：", "", "```text", stderr[:2000], "```"])
+    meta = {
+        "host_count": len(per_host_results),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "risk_hosts": [item["host_name"] for item in per_host_results if not item.get("success")],
+        "primary_metrics": {
+            "action_type": plan.action_type,
+        },
+    }
+    return "\n".join(lines).strip(), meta, summary
+
+
+def _build_error_report(title: str, summary: str, *, reason: str | None = None) -> dict[str, Any]:
+    lines = [
+        f"# {title}",
+        "",
+        "## 结果",
+        f"- {summary}",
+    ]
+    if reason:
+        lines.extend(["", "## 原因", reason])
+    return {
+        "summary": summary,
+        "report_kind": "error",
+        "report_markdown": "\n".join(lines).strip(),
+        "report_meta": {
+            "host_count": 0,
+            "success_count": 0,
+            "failed_count": 1,
+            "risk_hosts": [],
+            "primary_metrics": {},
+        },
+    }
+
+
 def _recent_task_context(session: Session, session_id: str, limit: int = 5) -> list[dict[str, Any]]:
     tasks = list(
         session.exec(
@@ -450,6 +726,19 @@ class GoalDrivenOrchestrator:
         service_match = re.search(r"(?:服务|service)\s*[:：]?\s*([a-zA-Z0-9._-]+)", prompt)
         service_name = plan.parameters.get("service_name") or (service_match.group(1) if service_match else None)
 
+        if any(keyword in prompt for keyword in ["磁盘", "硬盘"]) or "disk" in lowered:
+            plan.task_type = "query"
+            plan.action_type = "query_disk"
+            plan.title = "查询磁盘使用情况" if "详细" not in prompt and "报告" not in prompt else "硬盘使用情况分析报告"
+            plan.goal = f"在目标主机上获取磁盘使用情况并输出分析: {prompt}"
+            plan.criteria = [{"type": "has_disk_result"}]
+            plan.parameters = {
+                **plan.parameters,
+                "analysis_type": "comprehensive" if any(keyword in prompt for keyword in ["详细", "报告", "分析"]) else "basic",
+            }
+            plan.explanation = "该请求明确指向磁盘/硬盘分析，统一归一化到 query_disk。"
+            return plan
+
         if plan.action_type == "search_files":
             plan.parameters = {
                 **plan.parameters,
@@ -693,6 +982,82 @@ class GoalDrivenOrchestrator:
                 payload=payload,
             )
 
+    def _build_result_payload(
+        self,
+        *,
+        plan: IntentPlan,
+        prompt: str,
+        per_host_results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if plan.action_type == "query_disk":
+            report_markdown, report_meta, summary = _build_disk_report(per_host_results, prompt)
+            return {
+                "summary": summary,
+                "per_host": per_host_results,
+                "report_kind": "analysis",
+                "report_markdown": report_markdown,
+                "report_meta": report_meta,
+            }
+        report_markdown, report_meta, summary = _build_generic_report(
+            plan=plan,
+            prompt=prompt,
+            per_host_results=per_host_results,
+        )
+        return {
+            "summary": summary,
+            "per_host": per_host_results,
+            "report_kind": "analysis",
+            "report_markdown": report_markdown,
+            "report_meta": report_meta,
+        }
+
+    def _build_diagnosis_payload(
+        self,
+        *,
+        host: Host,
+        prompt: str,
+        observation: dict[str, Any],
+        diagnosis: dict[str, Any],
+    ) -> dict[str, Any]:
+        summary = str(diagnosis.get("summary") or "诊断完成")
+        lines = [
+            "# 服务诊断报告",
+            "",
+            "## 执行摘要",
+            f"- 请求：{prompt}",
+            f"- 目标主机：{host.name}",
+            f"- 结论：{summary}",
+            "",
+            "## 根因分析",
+            f"- 根因：{diagnosis.get('root_cause') or 'unknown'}",
+            f"- 置信度：{diagnosis.get('confidence') if diagnosis.get('confidence') is not None else 'unknown'}",
+            "",
+            "## 建议动作",
+            f"- 推荐动作：`{diagnosis.get('recommended_action_type') or 'none'}`",
+        ]
+        explanation = str(diagnosis.get("explanation") or "").strip()
+        if explanation:
+            lines.extend(["", "## 解释", explanation])
+        stdout = str(observation.get("stdout") or "").strip()
+        if stdout:
+            lines.extend(["", "## 观察到的原始信息", "```text", stdout[:4000], "```"])
+        return {
+            "summary": summary,
+            "diagnosis": diagnosis,
+            "observation": observation,
+            "report_kind": "diagnosis",
+            "report_markdown": "\n".join(lines).strip(),
+            "report_meta": {
+                "host_count": 1,
+                "success_count": 1,
+                "failed_count": 0,
+                "risk_hosts": [host.name],
+                "primary_metrics": {
+                    "recommended_action_type": diagnosis.get("recommended_action_type") or "none",
+                },
+            },
+        }
+
     async def _request_approval(
         self,
         *,
@@ -746,10 +1111,13 @@ class GoalDrivenOrchestrator:
         plan: IntentPlan,
     ) -> Task:
         read_only_actions = {"query_disk", "search_files", "check_port", "query_process"}
-        per_host_results: list[dict[str, Any]] = []
-        for host in hosts:
+        
+        async def _run_for_host(host: Host) -> dict[str, Any]:
             credential = credentials.get(host.id)
             act_result = await self._execute_action(host, credential, plan.action_type, plan.parameters)
+            if plan.action_type in read_only_actions and not act_result.get("success") and _looks_transient_transport_error(act_result):
+                await asyncio.sleep(0.4)
+                act_result = await self._execute_action(host, credential, plan.action_type, plan.parameters)
             if plan.action_type in read_only_actions:
                 verify_result = {
                     "success": bool(act_result.get("success", False)),
@@ -760,20 +1128,25 @@ class GoalDrivenOrchestrator:
             else:
                 verify_result = await self._verify(host, credential, plan.action_type, plan.parameters)
             host_success = bool(act_result.get("success", False)) and bool(verify_result.get("success", False))
-            per_host_results.append(
-                {
-                    "host_id": host.id,
-                    "host_name": host.name,
-                    "action_result": jsonable(act_result),
-                    "verification_result": jsonable(verify_result),
-                    "success": host_success,
-                }
-            )
+            return {
+                "host_id": host.id,
+                "host_name": host.name,
+                "action_result": jsonable(act_result),
+                "verification_result": jsonable(verify_result),
+                "success": host_success,
+            }
+
+        per_host_results = list(await asyncio.gather(*(_run_for_host(host) for host in hosts)))
+        all_action_success = all(item["action_result"].get("success") for item in per_host_results)
+        all_verify_success = all(item["verification_result"].get("success") for item in per_host_results)
+        all_host_success = all(item["success"] for item in per_host_results)
+        any_host_success = any(item["success"] for item in per_host_results)
+        partial_read_only_success = len(hosts) > 1 and plan.action_type in read_only_actions and any_host_success
         self._record_step(
             task_id=task.id,
             step_type="act",
             title="执行主动作",
-            status="completed" if all(item["action_result"].get("success") for item in per_host_results) else "failed",
+            status="completed" if all_action_success or partial_read_only_success else "failed",
             input_json={"action_type": plan.action_type, "parameters": plan.parameters, "host_ids": [host.id for host in hosts]},
             output_json={"per_host": per_host_results},
             retryable=False,
@@ -782,13 +1155,12 @@ class GoalDrivenOrchestrator:
             task_id=task.id,
             step_type="verify",
             title="校验成功标准",
-            status="completed" if all(item["verification_result"].get("success") for item in per_host_results) else "failed",
+            status="completed" if all_verify_success or partial_read_only_success else "failed",
             input_json={"criteria": task.criteria_json},
             output_json={"per_host": per_host_results},
         )
         first_host = hosts[0]
-        success = all(item["success"] for item in per_host_results)
-        summary = None
+        success = all_host_success or partial_read_only_success
         if len(hosts) == 1:
             summary = await ClaudePlanner.explain_result(
                 prompt=task.prompt,
@@ -797,15 +1169,12 @@ class GoalDrivenOrchestrator:
                 action_result=per_host_results[0]["action_result"],
                 verification_result=per_host_results[0]["verification_result"],
             )
-        host_statuses = "，".join(
-            f"{item['host_name']}:{'成功' if item['success'] else '失败'}" for item in per_host_results
-        )
+        else:
+            summary = None
         task.status = "succeeded" if success else "failed"
-        task.result_json = {
-            "summary": summary
-            or f"{plan.title}已在 {len(hosts)} 台主机上执行；{host_statuses}。",
-            "per_host": per_host_results,
-        }
+        task.result_json = self._build_result_payload(plan=plan, prompt=task.prompt, per_host_results=per_host_results)
+        if summary:
+            task.result_json["summary"] = summary
         task.updated_at = now()
         self.session.add(task)
         self.session.commit()
@@ -869,11 +1238,12 @@ class GoalDrivenOrchestrator:
         recommended_action = diagnosis.get("recommended_action_type") or "none"
         if recommended_action == "none":
             task.status = "succeeded"
-            task.result_json = {
-                "summary": diagnosis.get("summary"),
-                "diagnosis": diagnosis,
-                "observation": observation,
-            }
+            task.result_json = self._build_diagnosis_payload(
+                host=host,
+                prompt=task.prompt,
+                observation=observation,
+                diagnosis=diagnosis,
+            )
             task.updated_at = now()
             self.session.add(task)
             self.session.commit()
@@ -903,7 +1273,11 @@ class GoalDrivenOrchestrator:
         policy = PolicyEngine.evaluate(recommendation_plan.action_type, recommendation_plan.parameters, host)
         if not policy.get("allowed", False):
             task.status = "failed"
-            task.result_json = {"summary": policy.get("reason"), "diagnosis": diagnosis}
+            task.result_json = _build_error_report(
+                "诊断后修复被阻断",
+                policy.get("reason") or "策略引擎已阻断该修复动作。",
+                reason=str(diagnosis.get("summary") or ""),
+            ) | {"diagnosis": diagnosis}
             self.session.add(task)
             self.session.commit()
             return task
@@ -941,9 +1315,14 @@ class GoalDrivenOrchestrator:
         credential = credentials[host.id]
 
         live_metrics_by_host: dict[int, dict[str, Any]] = {}
-        for target_host in hosts:
+        
+        async def _collect_host_metrics(target_host: Host) -> tuple[int, dict[str, Any]]:
             target_credential = credentials[target_host.id]
             metrics = await HostInspector.metrics(target_host, target_credential)
+            return target_host.id, metrics
+
+        for host_id, metrics in await asyncio.gather(*(_collect_host_metrics(target_host) for target_host in hosts)):
+            target_host = next(item for item in hosts if item.id == host_id)
             target_host.metrics_json = metrics
             target_host.last_seen_at = now()
             self.session.add(target_host)
@@ -1003,8 +1382,11 @@ class GoalDrivenOrchestrator:
 
         if not policy.get("allowed", False):
             task.status = "failed"
-            task.result_json = {
-                "summary": policy.get("reason", "Blocked"),
+            task.result_json = _build_error_report(
+                task.title,
+                policy.get("reason", "Blocked"),
+                reason=plan.explanation,
+            ) | {
                 "policy": policy,
                 "plan_explanation": plan.explanation,
             }
@@ -1023,7 +1405,11 @@ class GoalDrivenOrchestrator:
         if plan.action_type == "diagnose_service":
             if len(hosts) > 1:
                 task.status = "failed"
-                task.result_json = {"summary": "服务级诊断当前要求精确选择单台主机执行。"}
+                task.result_json = _build_error_report(
+                    task.title,
+                    "服务级诊断当前要求精确选择单台主机执行。",
+                    reason="请在顶部目标主机里只保留一台主机后再执行。",
+                )
                 self.session.add(task)
                 self.session.commit()
                 return task
@@ -1062,7 +1448,11 @@ class GoalDrivenOrchestrator:
 
         if not approved:
             task.status = "failed"
-            task.result_json = {"summary": reason or "Approval rejected", "reason": reason}
+            task.result_json = _build_error_report(
+                task.title,
+                reason or "Approval rejected",
+                reason=reason,
+            )
             self.session.add(task)
             self.session.commit()
             self._audit_hosts(

@@ -38,6 +38,92 @@ const pendingPhases = [
   '整理结论并准备返回',
 ]
 
+function parseDfOutput(stdout?: string) {
+  return (stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(1)
+    .map((line) => {
+      const parts = line.split(/\s+/)
+      if (parts.length < 6) return null
+      const [filesystem, size, used, avail, usePercent, mount] = parts
+      return {
+        filesystem,
+        size,
+        used,
+        avail,
+        usePercent,
+        mount,
+      }
+    })
+    .filter(Boolean) as Array<{
+      filesystem: string
+      size: string
+      used: string
+      avail: string
+      usePercent: string
+      mount: string
+    }>
+}
+
+function buildFallbackReport(task: any, hostNameMap: Map<number, string>) {
+  const report = task?.result_json?.report_markdown
+  if (typeof report === 'string' && report.trim()) {
+    return report.trim()
+  }
+  const perHost = task?.result_json?.per_host ?? []
+  if (!perHost.length) {
+    return task?.result_json?.summary ?? task?.plan_json?.plan_explanation ?? '任务已提交，等待结果。'
+  }
+  const isDisk = task?.plan_json?.action_type === 'query_disk'
+  if (isDisk) {
+    const sections = [
+      `# ${task.title}`,
+      '',
+      '## 执行摘要',
+      `- 请求：${task.prompt}`,
+      `- 目标主机：${perHost.length} 台`,
+      '',
+      '## 逐主机结果',
+    ]
+    perHost.forEach((item: any) => {
+      const rows = parseDfOutput(item?.action_result?.stdout)
+      const root = rows.find((row) => row.mount === '/') ?? rows[0]
+      sections.push('', `### ${hostNameMap.get(item.host_id) ?? item.host_name ?? `host-${item.host_id}`}`)
+      sections.push(`- 状态：${item.success ? '成功' : '失败'}`)
+      if (root) {
+        sections.push(`- 根分区：已用 ${root.used} / 总量 ${root.size} / 可用 ${root.avail} / 使用率 ${root.usePercent}`)
+      }
+      if (rows.length) {
+        sections.push('', '| 挂载点 | 已用 | 总量 | 可用 | 使用率 |')
+        sections.push('| --- | --- | --- | --- | --- |')
+        rows.slice(0, 4).forEach((row) => {
+          sections.push(`| ${row.mount} | ${row.used} | ${row.size} | ${row.avail} | ${row.usePercent} |`)
+        })
+      }
+    })
+    return sections.join('\n')
+  }
+  const sections = [
+    `# ${task.title}`,
+    '',
+    '## 执行摘要',
+    `- ${task?.result_json?.summary ?? '任务已完成'}`,
+    '',
+    '## 逐主机结果',
+  ]
+  perHost.forEach((item: any) => {
+    sections.push('', `### ${hostNameMap.get(item.host_id) ?? item.host_name ?? `host-${item.host_id}`}`)
+    sections.push(`- 状态：${item.success ? '成功' : '失败'}`)
+    const stdout = item?.action_result?.stdout?.trim()
+    if (stdout) {
+      sections.push('', '```text', stdout.slice(0, 2500), '```')
+    }
+  })
+  return sections.join('\n')
+}
+
 function getTaskStatusColor(status: string) {
   if (status === 'succeeded') return 'green'
   if (status === 'waiting_approval') return 'gold'
@@ -180,29 +266,29 @@ export function AgentPanel() {
 
   const latestTask = sessionTasks.at(-1)
   const latestTaskId = latestTask?.id ?? null
-  const latestTaskSummary = latestTask
-    ? (latestTask.result_json?.summary ?? latestTask.plan_json?.plan_explanation ?? '')
+  const latestTaskReport = latestTask
+    ? buildFallbackReport(latestTask, hostNameMap)
     : ''
 
   useEffect(() => {
-    if (!latestTaskId || !latestTaskSummary || pendingDraft) return
+    if (!latestTaskId || !latestTaskReport || pendingDraft) return
     if (streamedTaskRef.current === latestTaskId) return
     streamedTaskRef.current = latestTaskId
     setStreamingTaskId(latestTaskId)
     setStreamingSummary('')
 
     let cursor = 0
-    const chunk = Math.max(2, Math.ceil(latestTaskSummary.length / 42))
+    const chunk = Math.max(4, Math.ceil(latestTaskReport.length / 64))
     const timer = window.setInterval(() => {
-      cursor = Math.min(latestTaskSummary.length, cursor + chunk)
-      setStreamingSummary(latestTaskSummary.slice(0, cursor))
-      if (cursor >= latestTaskSummary.length) {
+      cursor = Math.min(latestTaskReport.length, cursor + chunk)
+      setStreamingSummary(latestTaskReport.slice(0, cursor))
+      if (cursor >= latestTaskReport.length) {
         window.clearInterval(timer)
       }
     }, 36)
 
     return () => window.clearInterval(timer)
-  }, [latestTaskId, latestTaskSummary, pendingDraft])
+  }, [hostNameMap, latestTaskId, latestTaskReport, pendingDraft])
 
   const startVoiceInput = () => {
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -327,15 +413,15 @@ export function AgentPanel() {
 
           if (entry.pending) {
             return (
-              <article key={entry.key} className="agent-message agent-message--assistant">
-                <div className="agent-message__meta">
+              <article key={entry.key} className="agent-output agent-output--pending">
+                <div className="agent-output__meta">
                   <Space size={6}>
                     <RobotOutlined />
                     <span>XFusion Agent</span>
                     <Tag color="blue">执行中</Tag>
                   </Space>
                 </div>
-                <div className="agent-message__body agent-message__body--pending">
+                <div className="agent-output__surface agent-output__surface--pending">
                   <div className="agent-typing">
                     <span />
                     <span />
@@ -355,13 +441,13 @@ export function AgentPanel() {
           const task = entry.task
           const toolCalls = task.plan_json?.ai?.tool_calls ?? []
           const perHost = task.result_json?.per_host ?? []
-          const finalSummary = task.result_json?.summary ?? task.plan_json?.plan_explanation ?? '任务已提交，等待结果。'
-          const visibleSummary = task.id === streamingTaskId && streamingSummary
+          const finalReport = buildFallbackReport(task, hostNameMap)
+          const visibleReport = task.id === streamingTaskId && streamingSummary
             ? streamingSummary
-            : finalSummary
+            : finalReport
           return (
-            <article key={entry.key} className="agent-message agent-message--assistant">
-              <div className="agent-message__meta">
+            <article key={entry.key} className={`agent-output agent-output--${task.status}`}>
+              <div className="agent-output__meta">
                 <Space size={6}>
                   <RobotOutlined />
                   <span>XFusion Agent</span>
@@ -369,42 +455,48 @@ export function AgentPanel() {
                   <span>{formatTimestamp(task.updated_at)}</span>
                 </Space>
               </div>
-              <div className="agent-message__body">
-                <Typography.Title level={5} style={{ marginTop: 0, marginBottom: 8 }}>
-                  {task.title}
-                </Typography.Title>
-                <div className="agent-message__richtext">
+              <div className="agent-output__surface">
+                <div className="agent-output__headline">
+                  <Typography.Title level={4} style={{ margin: 0 }}>
+                    {task.title}
+                  </Typography.Title>
+                  <Space size={8} wrap>
+                    <Tag color="geekblue">{task.plan_json?.ai?.gateway_model ?? activeModel}</Tag>
+                    <Tag color="green">{task.target_hosts?.length ?? perHost.length} 台主机</Tag>
+                  </Space>
+                </div>
+                <div className="agent-output__richtext">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {ensureMarkdown(visibleSummary)}
+                    {ensureMarkdown(visibleReport)}
                   </ReactMarkdown>
-                  {task.id === streamingTaskId && visibleSummary.length < finalSummary.length ? (
-                    <span className="agent-message__cursor" aria-hidden="true">▍</span>
+                  {task.id === streamingTaskId && visibleReport.length < finalReport.length ? (
+                    <span className="agent-output__cursor" aria-hidden="true">▍</span>
                   ) : null}
                 </div>
                 {(toolCalls.length || perHost.length) ? (
-                  <details className="agent-message__details">
+                  <details className="agent-output__details">
                     <summary>执行细节</summary>
-                    <div className="agent-message__details-body">
-                      <div className="agent-message__detail-line">
+                    <div className="agent-output__details-body">
+                      <div className="agent-output__detail-line">
                         <span>任务类型</span>
                         <strong>{task.task_type}</strong>
                       </div>
                       {task.plan_json?.ai?.gateway_model ? (
-                        <div className="agent-message__detail-line">
+                        <div className="agent-output__detail-line">
                           <span>模型</span>
                           <strong>{task.plan_json.ai.gateway_model}</strong>
                         </div>
                       ) : null}
                       {toolCalls.length ? (
-                        <div className="agent-message__detail-line">
+                        <div className="agent-output__detail-line">
                           <span>工具调用</span>
                           <strong>{toolCalls.length} 次</strong>
                         </div>
                       ) : null}
                       {perHost.length ? (
-                        <div className="agent-message__host-results">
+                        <div className="agent-output__host-results">
                           {perHost.map((item: any, index: number) => (
-                            <div key={`${task.id}-host-${index}`} className="agent-message__host-row">
+                            <div key={`${task.id}-host-${index}`} className="agent-output__host-row">
                               <span>{hostNameMap.get(item.host_id) ?? `host-${item.host_id}`}</span>
                               <Tag color={item.success ? 'green' : 'red'}>
                                 {item.success ? '成功' : '失败'}

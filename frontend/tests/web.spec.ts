@@ -101,9 +101,9 @@ test('agent panel can send a real task from the UI', async ({ page }) => {
   await expect(page.locator('.agent-stage').getByRole('button', { name: '发送给 Agent' })).toBeEnabled()
   await page.locator('.agent-stage').getByRole('button', { name: '发送给 Agent' }).click()
 
-  await expect(page.locator('.agent-message--assistant').last()).toContainText(/连接目标主机|分析当前状态|调用运维工具|整理结论/, { timeout: 20_000 })
-  await expect(page.locator('.agent-message--assistant').last()).not.toContainText('Agent 正在持续规划和执行', { timeout: 150_000 })
-  await expect(page.locator('.agent-message--assistant').last()).toContainText(/磁盘|空间|主机|执行细节/, { timeout: 150_000 })
+  await expect(page.locator('.agent-output').last()).toContainText(/连接目标主机|分析当前状态|调用运维工具|整理结论/, { timeout: 20_000 })
+  await expect(page.locator('.agent-output').last()).not.toContainText('Agent 正在持续规划和执行', { timeout: 150_000 })
+  await expect(page.locator('.agent-output').last()).toContainText(/硬盘|磁盘|分区|执行细节/, { timeout: 150_000 })
 })
 
 test('tasks execute through claude sdk gateway and record provider metadata', async ({ request }) => {
@@ -149,4 +149,36 @@ test('tasks execute through claude sdk gateway and record provider metadata', as
   expect(task.plan_json.ai.gateway_model).toBe('GLM-4.5')
   expect(task.plan_json.ai.tool_calls.length).toBeGreaterThan(0)
   expect(task.result_json.per_host[0].success).toBeTruthy()
+  expect(task.result_json.report_markdown).toContain('#')
+  expect(task.result_json.report_kind).toBeTruthy()
+})
+
+test('multi-host disk analysis returns structured report markdown', async ({ request }) => {
+  test.setTimeout(240_000)
+
+  const login = await request.post('http://127.0.0.1:8000/api/auth/login', {
+    data: { username: 'admin', password: 'admin123' },
+  })
+  expect(login.ok()).toBeTruthy()
+  const { access_token } = await login.json()
+
+  const execute = await request.post('http://127.0.0.1:8000/api/tasks/execute', {
+    headers: {
+      Authorization: `Bearer ${access_token}`,
+      'Content-Type': 'application/json',
+    },
+    data: {
+      prompt: '请给我输出四台服务器硬盘情况的详细报告',
+      session_id: 'playwright-report-doc',
+      selected_host_ids: [1, 2, 3, 4],
+    },
+  })
+
+  expect(execute.ok()).toBeTruthy()
+  const task = await execute.json()
+  expect(task.status).toBe('succeeded')
+  expect(task.result_json.report_kind).toBe('analysis')
+  expect(task.result_json.report_markdown).toContain('## 执行摘要')
+  expect(task.result_json.report_markdown).toContain('## 逐主机分析')
+  expect(task.result_json.report_meta.host_count).toBe(4)
 })
