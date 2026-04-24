@@ -196,6 +196,52 @@ export interface ProviderInfo {
   provider_name: string
   is_configured: boolean
   models: string[]
+  supports_custom_model?: boolean
+}
+
+export interface HostRecord {
+  id: number
+  name: string
+  address: string
+}
+
+export interface TaskStepRecord {
+  step_type: string
+  title: string
+  status: string
+  output_json?: Record<string, unknown>
+}
+
+export interface TaskRecord {
+  id: number
+  title: string
+  prompt: string
+  status: string
+  task_type: string
+  risk_level: string
+  goal: string
+  plan_json: {
+    plan_explanation?: string
+    ai?: {
+      used_ai_planning?: boolean
+    }
+    [key: string]: unknown
+  }
+  result_json: {
+    summary?: string
+    [key: string]: unknown
+  }
+  steps?: TaskStepRecord[]
+}
+
+export interface ValidationItem {
+  requirement: string
+  evidence: string
+  status: string
+}
+
+export interface ValidationResponse {
+  items: ValidationItem[]
 }
 
 export async function fetchProviders(): Promise<ProviderInfo[]> {

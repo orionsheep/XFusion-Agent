@@ -18,9 +18,9 @@ import {
 } from 'antd'
 import { CheckCircleFilled, MinusCircleOutlined } from '@ant-design/icons'
 import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
+import type { ProviderInfo } from '../services/api'
 import {
   API_BASE_URL,
-  ProviderInfo,
   changePassword,
   collectMonitoringSnapshots,
   createUser,

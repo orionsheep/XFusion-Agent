@@ -75,6 +75,7 @@ class OpenAICompatiblePlugin:
     _BASE_URL: str = ""
     _API_KEY_ENV: str = ""
     _ALIASES: dict[str, str] = {}
+    _SUPPORTS_CUSTOM_MODEL_INPUT: bool = True
 
     def normalize_model_id(self, model_id: str) -> str:
         return self._ALIASES.get(model_id, model_id)
@@ -568,6 +569,7 @@ class WenxinPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
         model = self.normalize_model_id(model_id)
         url = self._CHAT_URL.format(model=model)
@@ -639,8 +641,9 @@ class SparkPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = os.environ["SPARK_API_KEY"]
+        api_key = api_key_override or os.environ["SPARK_API_KEY"]
         model = self.normalize_model_id(model_id)
         body: dict[str, Any] = {
             "model": model,
@@ -682,8 +685,9 @@ class GeminiPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = os.environ["GEMINI_API_KEY"]
+        api_key = api_key_override or os.environ["GEMINI_API_KEY"]
         model = self.normalize_model_id(model_id)
         url = f"{self._BASE}/{model}:generateContent?key={api_key}"
 
@@ -716,8 +720,9 @@ class GeminiPlugin:
         max_turns: int = 10,
         max_tokens: int = 4096,
         timeout: int = 60,
+        api_key_override: str | None = None,
     ) -> AgentLoopResult:
-        api_key = os.environ["GEMINI_API_KEY"]
+        api_key = api_key_override or os.environ["GEMINI_API_KEY"]
         model = self.normalize_model_id(model_id)
         all_tool_calls: list[ToolCall] = []
 
@@ -869,6 +874,10 @@ class ProviderRegistry:
                 "provider_name": name,
                 "models": models,
                 "env_key": getattr(plugin, "_API_KEY_ENV", ""),
+                "env_available": bool(plugin.is_available()),
+                "supports_custom_model": bool(
+                    getattr(plugin, "_SUPPORTS_CUSTOM_MODEL_INPUT", False)
+                ),
             })
         return result
 

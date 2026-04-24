@@ -17,7 +17,8 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ExpandablePanelCard } from './ExpandablePanelCard'
-import { ProviderInfo, executeTask, fetchHosts, fetchProviders, fetchTask, fetchTasks } from '../services/api'
+import type { HostRecord, ProviderInfo, TaskRecord, TaskStepRecord } from '../services/api'
+import { executeTask, fetchHosts, fetchProviders, fetchTask, fetchTasks } from '../services/api'
 
 const quickPrompts = [
   '查询当前磁盘剩余空间',
@@ -41,6 +42,23 @@ function getTaskAlertType(status?: string): 'success' | 'info' | 'warning' | 'er
   return 'info'
 }
 
+type SpeechRecognitionResultEvent = {
+  results?: ArrayLike<ArrayLike<{ transcript?: string }>>
+}
+
+type SpeechRecognitionInstance = {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  onstart: (() => void) | null
+  onend: (() => void) | null
+  onerror: (() => void) | null
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null
+  start: () => void
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance
+
 export function AgentPanel() {
   const location = useLocation()
   const [messageApi, contextHolder] = message.useMessage()
@@ -48,14 +66,25 @@ export function AgentPanel() {
   const [sessionId, setSessionId] = useState('console-main')
   const [selectedHosts, setSelectedHosts] = useState<number[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<number>()
-  const [routePinnedHostId, setRoutePinnedHostId] = useState<number | null>(null)
   const [listening, setListening] = useState(false)
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined)
+  const [customModel, setCustomModel] = useState('')
   const queryClient = useQueryClient()
+  const isTasksRoute = location.pathname === '/tasks'
+  const pinnedHostId = useMemo(() => {
+    const match = location.pathname.match(/^\/hosts\/(\d+)$/)
+    if (!match) {
+      return null
+    }
+    const hostId = Number(match[1])
+    return Number.isFinite(hostId) ? hostId : null
+  }, [location.pathname])
+  const effectiveSelectedHosts = pinnedHostId !== null ? [pinnedHostId] : selectedHosts
 
   const { data: providers = [] } = useQuery<ProviderInfo[]>({
     queryKey: ['providers'],
     queryFn: fetchProviders,
+    staleTime: 60_000,
   })
 
   const modelOptions = useMemo(() => {
@@ -69,25 +98,28 @@ export function AgentPanel() {
   const { data: hosts = [] } = useQuery({
     queryKey: ['hosts'],
     queryFn: fetchHosts,
+    staleTime: 60_000,
   })
-  const { data: tasks = [] } = useQuery({
+  const { data: tasks = [] } = useQuery<TaskRecord[]>({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
-    refetchInterval: 5000,
+    enabled: isTasksRoute,
+    refetchInterval: isTasksRoute ? 5000 : false,
   })
-  const { data: currentTask } = useQuery({
-    queryKey: ['task', selectedTaskId],
-    queryFn: () => fetchTask(Number(selectedTaskId)),
-    enabled: Boolean(selectedTaskId),
+  const activeTaskId = selectedTaskId ?? tasks[0]?.id
+  const { data: currentTask } = useQuery<TaskRecord>({
+    queryKey: ['task', activeTaskId],
+    queryFn: () => fetchTask(Number(activeTaskId)),
+    enabled: Boolean(activeTaskId),
     refetchInterval: (query) => {
-      const status = (query.state.data as any)?.status
+      const status = query.state.data?.status
       return !status || ['running', 'waiting_approval'].includes(status) ? 3000 : false
     },
   })
 
   const executeMutation = useMutation({
     mutationFn: executeTask,
-    onSuccess: (task) => {
+    onSuccess: (task: TaskRecord) => {
       setSelectedTaskId(task.id)
       messageApi.success(`任务已提交，当前状态：${task.status}`)
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -96,38 +128,16 @@ export function AgentPanel() {
       if (!prompt.trim()) return
       setPrompt('')
     },
-    onError: (error: any) => {
-      messageApi.error(error?.response?.data?.detail ?? '任务提交失败')
+    onError: (error: unknown) => {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      messageApi.error(detail ?? '任务提交失败')
     },
   })
 
   const hostOptions = useMemo(
-    () => hosts.map((host: any) => ({ label: `${host.name} (${host.address})`, value: host.id })),
+    () => hosts.map((host: HostRecord) => ({ label: `${host.name} (${host.address})`, value: host.id })),
     [hosts],
   )
-
-  useEffect(() => {
-    if (!tasks.length || selectedTaskId) return
-    setSelectedTaskId(tasks[0].id)
-  }, [tasks, selectedTaskId])
-
-  useEffect(() => {
-    const match = location.pathname.match(/^\/hosts\/(\d+)$/)
-    if (!match) {
-      if (routePinnedHostId !== null) {
-        setSelectedHosts((current) =>
-          current.length === 1 && current[0] === routePinnedHostId ? [] : current,
-        )
-        setRoutePinnedHostId(null)
-      }
-      return
-    }
-    const hostId = Number(match[1])
-    if (Number.isFinite(hostId)) {
-      setSelectedHosts([hostId])
-      setRoutePinnedHostId(hostId)
-    }
-  }, [location.pathname, routePinnedHostId])
 
   useEffect(() => {
     return () => {
@@ -140,7 +150,11 @@ export function AgentPanel() {
   }, [selectedTaskId])
 
   const startVoiceInput = () => {
-    const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const recognitionWindow = window as Window & {
+      SpeechRecognition?: SpeechRecognitionConstructor
+      webkitSpeechRecognition?: SpeechRecognitionConstructor
+    }
+    const Recognition = recognitionWindow.SpeechRecognition || recognitionWindow.webkitSpeechRecognition
     if (!Recognition) {
       messageApi.warning('当前浏览器不支持语音识别，可改用 Chrome。')
       return
@@ -155,7 +169,7 @@ export function AgentPanel() {
       setListening(false)
       messageApi.error('语音识别失败，请重试')
     }
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionResultEvent) => {
       const transcript = event.results?.[0]?.[0]?.transcript ?? ''
       if (transcript) {
         setPrompt(transcript)
@@ -179,20 +193,24 @@ export function AgentPanel() {
       messageApi.warning('先输入一个任务目标')
       return
     }
-    if (!selectedHosts.length) {
+    if (!effectiveSelectedHosts.length) {
       messageApi.warning('至少选择一台目标主机')
       return
     }
+    const resolvedModel = customModel.trim() || selectedModel
     executeMutation.mutate({
       prompt,
-      selected_host_ids: selectedHosts,
+      selected_host_ids: effectiveSelectedHosts,
       session_id: sessionId,
       auto_approve: false,
-      model: selectedModel ?? null,
+      model: resolvedModel || null,
     })
   }
 
-  const canExecute = Boolean(prompt.trim() && selectedHosts.length)
+  const customModelHints = providers
+    .filter((provider) => provider.is_configured && provider.supports_custom_model && provider.models.length === 0)
+    .map((provider) => provider.provider_name)
+  const canExecute = Boolean(prompt.trim() && effectiveSelectedHosts.length)
 
   return (
     <div className="agent-panel">
@@ -204,7 +222,7 @@ export function AgentPanel() {
         extra={
           <Space wrap>
             <Tag color="geekblue">session {sessionId}</Tag>
-            <Tag color="green">{selectedHosts.length} 台目标主机</Tag>
+            <Tag color="green">{effectiveSelectedHosts.length} 台目标主机</Tag>
           </Space>
         }
       >
@@ -219,13 +237,14 @@ export function AgentPanel() {
                 allowClear
                 placeholder="选择目标主机"
                 options={hostOptions}
-                value={selectedHosts}
-                onChange={(values) => {
-                  setSelectedHosts(values)
-                  setRoutePinnedHostId(null)
-                }}
+                value={effectiveSelectedHosts}
+                disabled={pinnedHostId !== null}
+                onChange={(values) => setSelectedHosts(values)}
                 maxTagCount="responsive"
               />
+              {pinnedHostId !== null ? (
+                <Typography.Text type="secondary">当前从主机详情页进入，目标主机已锁定。</Typography.Text>
+              ) : null}
               <Input
                 value={sessionId}
                 onChange={(event) => setSessionId(event.target.value)}
@@ -271,7 +290,7 @@ export function AgentPanel() {
                     <Typography.Text strong>执行时间线</Typography.Text>
                     <Timeline
                       style={{ marginTop: 12 }}
-                      items={(currentTask.steps ?? []).slice(-6).map((step: any) => ({
+                      items={(currentTask.steps ?? []).slice(-6).map((step: TaskStepRecord) => ({
                         color: step.status === 'failed' ? 'red' : step.status === 'pending' ? 'gold' : 'green',
                         children: (
                           <Space direction="vertical" size={2}>
@@ -294,7 +313,7 @@ export function AgentPanel() {
               <List
                 dataSource={tasks.slice(0, 8)}
                 locale={{ emptyText: '暂无历史任务' }}
-                renderItem={(task: any) => (
+                renderItem={(task: TaskRecord) => (
                   <List.Item
                     style={{ cursor: 'pointer', paddingInline: 0 }}
                     onClick={() => setSelectedTaskId(task.id)}
@@ -340,6 +359,13 @@ export function AgentPanel() {
                     style={{ width: 200 }}
                     popupMatchSelectWidth={false}
                   />
+                  <Input
+                    size="small"
+                    placeholder="或输入 provider/model-id"
+                    value={customModel}
+                    onChange={(event) => setCustomModel(event.target.value)}
+                    style={{ width: 220 }}
+                  />
                   <Button
                     type="primary"
                     icon={<PlayCircleOutlined />}
@@ -351,6 +377,11 @@ export function AgentPanel() {
                   </Button>
                 </Space>
               </Space>
+              {customModelHints.length ? (
+                <Typography.Text type="secondary">
+                  已配置但需手填模型 ID 的 Provider：{customModelHints.join(' / ')}
+                </Typography.Text>
+              ) : null}
             </div>
           </Card>
         </div>

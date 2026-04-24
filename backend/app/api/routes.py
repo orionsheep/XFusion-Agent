@@ -542,12 +542,13 @@ def list_providers(
     }
     result = []
     for info in registry.list_provider_info():
-        env_available = bool(info["env_key"] and os.environ.get(info["env_key"]))
+        env_available = info["env_available"]
         is_configured = info["provider_name"] in user_keys or env_available
         result.append({
             "provider_name": info["provider_name"],
             "is_configured": is_configured,
             "models": info["models"],
+            "supports_custom_model": info.get("supports_custom_model", False),
         })
     return result
 

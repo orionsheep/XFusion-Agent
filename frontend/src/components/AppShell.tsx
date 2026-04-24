@@ -8,11 +8,23 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
-import { Avatar, Button, Layout, Menu, Space, Typography } from 'antd'
-import { useEffect, useState } from 'react'
+import { Avatar, Button, Layout, Menu, Skeleton, Space, Typography } from 'antd'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { AgentPanel } from './AgentPanel'
 import { clearStoredToken, fetchOverview } from '../services/api'
+
+const AgentPanel = lazy(() => import('./AgentPanel').then((module) => ({ default: module.AgentPanel })))
+
+type OverviewHost = {
+  status: string
+  monitoring_summary?: {
+    values?: {
+      cpu_percent?: number
+      memory_percent?: number
+      root_disk_percent?: number
+    }
+  }
+}
 
 const { Header, Sider, Content } = Layout
 
@@ -48,7 +60,11 @@ export function AppShell() {
     items.find((item) => item.key === '/'
       ? location.pathname === '/'
       : location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))?.key ?? '/'
-  const riskHostCount = (overview?.hosts ?? []).filter((host: any) => {
+  const shouldRenderAgentPanel = useMemo(
+    () => !['/settings', '/audit', '/approvals'].some((prefix) => location.pathname.startsWith(prefix)),
+    [location.pathname],
+  )
+  const riskHostCount = ((overview?.hosts ?? []) as OverviewHost[]).filter((host) => {
     const values = host.monitoring_summary?.values ?? {}
     return (
       (host.status !== 'online' && host.status !== 'registered') ||
@@ -160,9 +176,13 @@ export function AppShell() {
             <section className="control-workbench__workspace">
               <Outlet />
             </section>
-            <aside className="control-workbench__agent">
-              <AgentPanel />
-            </aside>
+            {shouldRenderAgentPanel ? (
+              <aside className="control-workbench__agent">
+                <Suspense fallback={<Skeleton active paragraph={{ rows: 8 }} />}>
+                  <AgentPanel />
+                </Suspense>
+              </aside>
+            ) : null}
           </div>
         </Content>
       </Layout>

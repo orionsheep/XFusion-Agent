@@ -506,7 +506,7 @@ def execute(payload: ExecutionPayload) -> dict[str, Any]:
         process_name = params.get("process_name")
         if process_name:
             return run(f"ps aux | grep -i '{process_name}' | grep -v grep | head -n 25 || true")
-        return run("ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 25")
+        return run("(ps aux --sort=-%cpu 2>/dev/null || ps aux) | head -n 25")
     if action == "check_port":
         port = params.get("port")
         return run(f"ss -ltnp | grep ':{port}' || true")

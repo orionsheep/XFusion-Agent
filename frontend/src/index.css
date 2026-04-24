@@ -570,7 +570,7 @@ body {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
   position: relative;
 }
 
@@ -583,6 +583,7 @@ body {
 
 .tasks-card--composer {
   flex: 0 0 58%;
+  overflow: auto;
 }
 
 .tasks-card--validation {
@@ -811,6 +812,7 @@ body {
 
 .agent-panel__subcard--live {
   flex: 1 1 0;
+  min-height: 380px;
 }
 
 .agent-panel__subcard--history,
