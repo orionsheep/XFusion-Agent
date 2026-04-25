@@ -42,7 +42,7 @@ function parseDfOutput(stdout: string): { filesystem: string; size: string; used
   return rows.length ? rows : null
 }
 
-function formatDiskSummary(rows: { filesystem: string; used: string; avail: string; usePercent: string; mount: string }[]): string {
+function formatDiskSummary(rows: { filesystem: string; size: string; used: string; avail: string; usePercent: string; mount: string }[]): string {
   const mains = rows.filter(r => r.mount === '/' || r.mount.startsWith('/dev'))
   const target = mains[0] || rows[0]
   if (!target) return ''
@@ -456,8 +456,11 @@ export function TasksPage() {
                         const queryActions = new Set(['query_disk', 'query_process', 'check_port', 'search_files'])
                         const actionType = currentTask.plan_json?.action_type as string | undefined
                         if (!actionType || !queryActions.has(actionType)) return null
-                        const perHost: Array<{ host_name: string; action_result?: { stdout?: string; stderr?: string } }> =
-                          currentTask.result_json?.per_host ?? []
+                        const perHost =
+                          (currentTask.result_json?.per_host as Array<{
+                            host_name: string
+                            action_result?: { stdout?: string; stderr?: string }
+                          }> | undefined) ?? []
                         if (!perHost.length) return null
                         return (
                           <Card size="small" title="查询结果">

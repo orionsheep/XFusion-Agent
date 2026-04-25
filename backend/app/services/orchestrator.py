@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from sqlmodel import Session, select
 
 from ..models.entities import Approval, Host, HostCredential, Service, Task, TaskStep, User
 from .claude_runtime import ClaudeGatewayRuntime
+from .llm_router import LLMMessage, registry
 from .platform import (
     AgentConnector,
     DashboardService,
@@ -1245,7 +1247,13 @@ class GoalDrivenOrchestrator:
         else:
             summary = None
         task.status = "succeeded" if success else "failed"
-        fallback_summary = f"{plan.title}已在 {len(hosts)} 台主机上执行；{host_statuses}。"
+        result_payload = self._build_result_payload(
+            plan=plan,
+            prompt=task.prompt,
+            per_host_results=per_host_results,
+        )
+        if summary:
+            result_payload["summary"] = summary
         if not success and not summary:
             first_stderr = next(
                 (
@@ -1256,11 +1264,8 @@ class GoalDrivenOrchestrator:
                 None,
             )
             if first_stderr:
-                fallback_summary += f" 连接错误: {first_stderr[:300]}"
-        task.result_json = {
-            "summary": summary or fallback_summary,
-            "per_host": per_host_results,
-        }
+                result_payload["summary"] = f"{result_payload['summary']} 连接错误: {first_stderr[:300]}"
+        task.result_json = result_payload
         task.updated_at = now()
         self.session.add(task)
         self.session.commit()

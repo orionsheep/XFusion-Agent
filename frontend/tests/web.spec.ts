@@ -1,11 +1,15 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
-test('agent-first home and secondary workspace show PDF-facing capabilities', async ({ page }) => {
+async function loginAsAdmin(page: Page) {
   await page.goto('/login')
-
   await page.getByLabel('用户名').fill('admin')
   await page.getByLabel('密码').fill('admin123')
   await page.getByRole('button', { name: '进入控制台' }).click()
+  await expect(page.getByRole('button', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
+}
+
+test('agent-first home and secondary workspace show PDF-facing capabilities', async ({ page }) => {
+  await loginAsAdmin(page)
 
   await expect(page.getByRole('button', { name: 'XFusion Agent' })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.agent-stage__threadbar')).toBeVisible({ timeout: 15_000 })
@@ -54,11 +58,7 @@ test('agent-first home and secondary workspace show PDF-facing capabilities', as
 })
 
 test('host detail handoff and host form mode logic work', async ({ page }) => {
-  await page.goto('/login')
-
-  await page.getByLabel('用户名').fill('admin')
-  await page.getByLabel('密码').fill('admin123')
-  await page.getByRole('button', { name: '进入控制台' }).click()
+  await loginAsAdmin(page)
 
   await page.goto('/hosts/1')
   await expect(page.getByRole('button', { name: '去任务中心' })).toBeVisible({ timeout: 15_000 })
@@ -87,11 +87,7 @@ test('host detail handoff and host form mode logic work', async ({ page }) => {
 test('agent panel can send a real task from the UI', async ({ page }) => {
   test.setTimeout(180_000)
 
-  await page.goto('/login')
-
-  await page.getByLabel('用户名').fill('admin')
-  await page.getByLabel('密码').fill('admin123')
-  await page.getByRole('button', { name: '进入控制台' }).click()
+  await loginAsAdmin(page)
 
   await page.goto('/')
   await expect(page.locator('.agent-stage')).toBeVisible({ timeout: 15_000 })
@@ -127,6 +123,8 @@ test('tasks execute through claude sdk gateway and record provider metadata', as
   })
 
   expect(switchProfile.ok()).toBeTruthy()
+  const runtimeProfile = await switchProfile.json()
+  test.skip(!runtimeProfile.gateway?.reachable, `LiteLLM gateway is unavailable: ${runtimeProfile.gateway?.reason ?? 'unreachable'}`)
 
   const execute = await request.post('http://127.0.0.1:8000/api/tasks/execute', {
     headers: {

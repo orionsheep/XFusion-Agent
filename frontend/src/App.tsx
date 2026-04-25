@@ -69,6 +69,7 @@ function App() {
                 }
               >
                 <Route index element={<DashboardPage />} />
+                <Route path="overview" element={<DashboardPage />} />
                 <Route path="hosts" element={<HostsPage />} />
                 <Route path="hosts/:hostId" element={<HostDetailPage />} />
                 <Route path="tasks" element={<TasksPage />} />

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import {
   Button,
   Card,
@@ -29,6 +29,7 @@ import {
   fetchCurrentUser,
   fetchIntegrations,
   fetchPdfValidation,
+  fetchRuntimeLlmProfile,
   fetchProviders,
   fetchUsers,
   resetUserPassword,
@@ -59,7 +60,7 @@ export function SettingsPage() {
     queryFn: fetchIntegrations,
   })
   const gatewayProvider = data?.providers?.find((provider: any) => provider.key === 'claude-sdk-gateway')
-  const { data: runtimeProfile, isLoading: loadingRuntimeProfile } = useQuery({
+  const { data: runtimeProfile } = useQuery({
     queryKey: ['runtime-llm-profile'],
     queryFn: fetchRuntimeLlmProfile,
   })
@@ -205,7 +206,7 @@ export function SettingsPage() {
     },
   })
 
-  if (isLoading || loadingCurrentUser || loadingRuntimeProfile) {
+  if (isLoading || loadingCurrentUser) {
     return <Skeleton active paragraph={{ rows: 12 }} />
   }
 
@@ -484,7 +485,7 @@ export function SettingsPage() {
                               删除
                             </Button>
                           ) : null,
-                        ].filter(Boolean) as React.ReactNode[]}
+                        ].filter(Boolean) as ReactNode[]}
                       >
                         <List.Item.Meta
                           avatar={

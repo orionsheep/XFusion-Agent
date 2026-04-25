@@ -21,6 +21,7 @@ from ..schemas.api import (
     PasswordChangeRequest,
     PasswordResetRequest,
     ProviderKeyUpsertRequest,
+    RuntimeProfileUpdateRequest,
     TaskExecuteRequest,
     UserCreateRequest,
     UserUpdateRequest,
