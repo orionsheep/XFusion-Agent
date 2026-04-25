@@ -40,6 +40,13 @@ const pendingPhases = [
   '整理结论并准备返回',
 ]
 
+const runningPhases = [
+  '观察主机',
+  '规划工具',
+  '执行动作',
+  '校验结果',
+]
+
 function parseDfOutput(stdout?: string) {
   return (stdout ?? '')
     .split('\n')
@@ -149,6 +156,35 @@ function ensureMarkdown(text: string) {
   const trimmed = text.trim()
   if (!trimmed) return ''
   return trimmed
+}
+
+function getStepStatusColor(status?: string) {
+  if (status === 'completed' || status === 'succeeded') return 'green'
+  if (status === 'failed') return 'red'
+  if (status === 'pending') return 'gold'
+  if (status === 'running') return 'blue'
+  return 'default'
+}
+
+function getStepSummary(step: any) {
+  const output = step?.output_json ?? {}
+  if (typeof output.message === 'string') return output.message
+  if (Array.isArray(output.per_host)) {
+    const success = output.per_host.filter((item: any) => item?.success).length
+    return `${success}/${output.per_host.length} 台主机完成`
+  }
+  if (Array.isArray(output.hosts)) return `已收集 ${output.hosts.length} 台主机上下文`
+  if (output.plan?.action_type) return `动作：${output.plan.action_type}`
+  if (step?.input_json?.action_type) return `动作：${step.input_json.action_type}`
+  return step?.title ?? '等待执行'
+}
+
+function getRunningStepIndex(steps: any[]) {
+  const runningIndex = steps.findIndex((step) => step.status === 'running' || step.status === 'pending')
+  if (runningIndex >= 0) return runningIndex
+  const failedIndex = steps.findIndex((step) => step.status === 'failed')
+  if (failedIndex >= 0) return failedIndex
+  return Math.max(0, steps.length - 1)
 }
 
 export function AgentPanel() {
@@ -516,11 +552,14 @@ export function AgentPanel() {
           const task = entry.task
           const toolCalls = task.plan_json?.ai?.tool_calls ?? []
           const perHost = task.result_json?.per_host ?? []
+          const steps = Array.isArray(task.steps) ? task.steps : []
+          const runningStepIndex = getRunningStepIndex(steps)
           const finalReport = buildFallbackReport(task, hostNameMap)
           const visibleReport = task.id === streamingTaskId && streamingSummary
             ? streamingSummary
             : finalReport
           const isStreaming = task.id === streamingTaskId && visibleReport.length < finalReport.length
+          const isRunningTask = task.status === 'running'
           return (
             <article
               key={entry.key}
@@ -544,6 +583,42 @@ export function AgentPanel() {
                     <Tag color="green">{task.target_hosts?.length ?? perHost.length} 台主机</Tag>
                   </Space>
                 </div>
+                {isRunningTask ? (
+                  <div className="agent-running-panel" role="status" aria-live="polite">
+                    <span className="agent-running-panel__spinner" aria-hidden="true" />
+                    <div className="agent-running-panel__body">
+                      <div className="agent-running-panel__topline">
+                        <strong>Agent 正在执行任务</strong>
+                        <span>
+                          {steps.length
+                            ? getStepSummary(steps[runningStepIndex])
+                            : `正在准备 ${task.plan_json?.action_type ?? task.task_type} 任务。`}
+                        </span>
+                      </div>
+                      <div className="agent-running-panel__progress" aria-hidden="true">
+                        <span />
+                      </div>
+                      <div className="agent-running-panel__steps" aria-label="实时执行步骤">
+                        {(steps.length ? steps : runningPhases.map((phase, index) => ({
+                          title: phase,
+                          status: index === pendingPhaseIndex % runningPhases.length ? 'running' : 'pending',
+                          output_json: {},
+                        }))).map((step: any, index: number) => (
+                          <span
+                            key={`${task.id}-running-step-${step.id ?? index}`}
+                            className={`agent-running-panel__step is-${step.status}${index === runningStepIndex ? ' is-current' : ''}`}
+                            style={{ animationDelay: `${index * 120}ms` }}
+                          >
+                            <i />
+                            <strong>{step.title || step.step_type}</strong>
+                            <em>{getStepSummary(step)}</em>
+                            <Tag color={getStepStatusColor(step.status)}>{step.status}</Tag>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="agent-output__richtext">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {ensureMarkdown(visibleReport)}

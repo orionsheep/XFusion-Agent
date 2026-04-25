@@ -26,7 +26,7 @@ import {
   message,
 } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { createHost, discoverHost, fetchHosts, profileHost } from '../services/api'
 
@@ -58,6 +58,7 @@ const modeLabelMap = Object.fromEntries(connectionModeOptions.map((item) => [ite
 
 export function HostsPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [messageApi, contextHolder] = message.useMessage()
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
@@ -66,6 +67,14 @@ export function HostsPage() {
   const queryClient = useQueryClient()
   const needsSsh = connectionMode !== 'agent'
   const needsAgent = connectionMode !== 'ssh'
+
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return
+    setOpen(true)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('new')
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     if (!needsAgent) {

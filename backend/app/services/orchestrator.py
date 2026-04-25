@@ -1441,6 +1441,23 @@ class GoalDrivenOrchestrator:
             "discover_services",
             "run_readonly_command",
         }
+
+        self._record_step(
+            task_id=task.id,
+            step_type="act",
+            title="执行主动作",
+            status="running",
+            input_json={
+                "action_type": plan.action_type,
+                "parameters": plan.parameters,
+                "host_ids": [host.id for host in hosts],
+            },
+            output_json={
+                "message": "正在连接目标主机并执行动作",
+                "host_count": len(hosts),
+            },
+            retryable=False,
+        )
         
         async def _run_for_host(host: Host) -> dict[str, Any]:
             credential = credentials.get(host.id)
@@ -1678,7 +1695,12 @@ class GoalDrivenOrchestrator:
         for host_id, metrics in await asyncio.gather(*(_collect_host_metrics(target_host) for target_host in hosts)):
             target_host = next(item for item in hosts if item.id == host_id)
             target_host.metrics_json = metrics
-            target_host.last_seen_at = now()
+            metrics_success = (metrics.get("raw") or {}).get("success") is not False
+            if metrics_success:
+                target_host.status = "online"
+                target_host.last_seen_at = now()
+            else:
+                target_host.status = "offline"
             self.session.add(target_host)
             self.session.commit()
             MonitoringCoreService.record_sample(self.session, host=target_host, metrics=metrics, source="task-entry")

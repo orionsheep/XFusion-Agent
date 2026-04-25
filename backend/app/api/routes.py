@@ -72,13 +72,30 @@ def get_user_provider_key(session: Session, user_id: int, provider_name: str) ->
 
 
 def serialize_host(host: Host) -> dict:
-    return serialize_model(host)
+    payload = serialize_model(host)
+    raw_metrics = (host.metrics_json or {}).get("raw") if isinstance(host.metrics_json, dict) else None
+    if isinstance(raw_metrics, dict) and raw_metrics.get("success") is False:
+        payload["status"] = "offline"
+        payload["status_reason"] = raw_metrics.get("stderr") or "latest metrics collection failed"
+    return payload
 
 
 def serialize_user(user: User) -> dict:
     payload = serialize_model(user)
     payload.pop("password_hash", None)
     return payload
+
+
+def serialize_task_with_steps(session: Session, task: Task) -> dict:
+    steps = session.exec(
+        select(TaskStep)
+        .where(TaskStep.task_id == task.id)
+        .order_by(TaskStep.id.asc())
+    ).all()
+    return {
+        **serialize_model(task),
+        "steps": [serialize_model(step) for step in steps],
+    }
 
 
 def count_active_admins(session: Session) -> int:
@@ -371,13 +388,17 @@ async def profile_host(
     credential = HostRepository.get_credential(session, host_id)
     profile = await HostInspector.profile(host, credential)
     host.profile_json = profile
-    host.os_type = profile.get("os_name", host.os_type)
-    host.os_version = profile.get("os_version", host.os_version)
-    host.kernel_version = profile.get("kernel", host.kernel_version)
-    host.package_manager = profile.get("package_manager", host.package_manager)
+    profile_success = (profile.get("raw") or {}).get("success") is not False
+    if profile_success:
+        host.os_type = profile.get("os_name", host.os_type)
+        host.os_version = profile.get("os_version", host.os_version)
+        host.kernel_version = profile.get("kernel", host.kernel_version)
+        host.package_manager = profile.get("package_manager", host.package_manager)
+        host.status = "online"
+        host.last_seen_at = now()
+    else:
+        host.status = "offline"
     host.last_profiled_at = now()
-    host.status = "online"
-    host.last_seen_at = now()
     session.add(host)
     session.commit()
     return {"host": serialize_model(host), "profile": profile}
@@ -393,7 +414,12 @@ async def metrics_host(
     credential = HostRepository.get_credential(session, host_id)
     metrics = await HostInspector.metrics(host, credential)
     host.metrics_json = metrics
-    host.last_seen_at = now()
+    metrics_success = (metrics.get("raw") or {}).get("success") is not False
+    if metrics_success:
+        host.status = "online"
+        host.last_seen_at = now()
+    else:
+        host.status = "offline"
     session.add(host)
     session.commit()
     MonitoringCoreService.record_sample(session, host=host, metrics=metrics, source="manual-refresh")
@@ -428,7 +454,7 @@ def list_tasks(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[dict]:
     tasks = session.exec(select(Task).order_by(Task.id.desc())).all()
-    return [serialize_model(task) for task in tasks]
+    return [serialize_task_with_steps(session, task) for task in tasks]
 
 
 @router.get("/tasks/{task_id}")
@@ -440,11 +466,7 @@ def get_task(
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    steps = session.exec(select(TaskStep).where(TaskStep.task_id == task_id).order_by(TaskStep.id.asc())).all()
-    return {
-        **serialize_model(task),
-        "steps": [serialize_model(step) for step in steps],
-    }
+    return serialize_task_with_steps(session, task)
 
 
 @router.post("/tasks/execute")
@@ -461,7 +483,7 @@ async def execute_task(
         payload.auto_approve,
         model=payload.model,
     )
-    return serialize_model(task)
+    return serialize_task_with_steps(session, task)
 
 
 @router.get("/approvals")
@@ -525,7 +547,12 @@ async def collect_monitoring_snapshots(
         try:
             metrics = await HostInspector.metrics(host, credential)
             host.metrics_json = metrics
-            host.last_seen_at = now()
+            metrics_success = (metrics.get("raw") or {}).get("success") is not False
+            if metrics_success:
+                host.status = "online"
+                host.last_seen_at = now()
+            else:
+                host.status = "offline"
             session.add(host)
             session.commit()
             sample = MonitoringCoreService.record_sample(session, host=host, metrics=metrics, source="full-collection")

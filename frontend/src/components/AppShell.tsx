@@ -77,6 +77,28 @@ function getHostMetrics(host: any) {
   }
 }
 
+function getEffectiveHostStatus(host: any) {
+  const rawMetrics = host.metrics_json?.raw
+  const rawSuccess = rawMetrics?.success
+  const stderr = String(rawMetrics?.stderr ?? '').toLowerCase()
+  if (rawSuccess === false || stderr.includes('connection lost') || stderr.includes('timed out')) {
+    return {
+      status: 'offline',
+      label: 'offline',
+      isOnline: false,
+      reason: rawMetrics?.stderr || '最近一次采集失败',
+    }
+  }
+  const rawStatus = String(host.status || 'unknown').toLowerCase()
+  const isOnline = ['online', 'registered'].includes(rawStatus)
+  return {
+    status: rawStatus,
+    label: rawStatus || 'unknown',
+    isOnline,
+    reason: isOnline ? '最近一次采集成功' : '主机未在线',
+  }
+}
+
 function AppShellInner() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -163,7 +185,7 @@ function AppShellInner() {
     ?? '未配置模型'
   const totalHostCount = overview?.hosts?.length ?? 0
   const onlineHostIds = hosts
-    .filter((host: any) => ['online', 'registered'].includes(String(host.status)))
+    .filter((host: any) => getEffectiveHostStatus(host).isOnline)
     .map((host: any) => host.id)
 
   useEffect(() => {
@@ -339,6 +361,7 @@ function AppShellInner() {
           {hosts.map((host: any) => {
             const selected = selectedHosts.includes(host.id)
             const metrics = getHostMetrics(host)
+            const reachability = getEffectiveHostStatus(host)
             const toggleHost = () => {
               setRoutePinnedHostId(null)
               setSelectedHosts(
@@ -356,7 +379,7 @@ function AppShellInner() {
               >
                 <span className="host-target-card__topline">
                   <strong>{host.name}</strong>
-                  <span className={`host-target-card__status is-${host.status}`}>{host.status}</span>
+                  <span className={`host-target-card__status is-${reachability.status}`}>{reachability.label}</span>
                 </span>
                 <span className="host-target-card__meta">
                   {host.address} · {formatHostOs(host)}
@@ -379,7 +402,7 @@ function AppShellInner() {
                   </span>
                 </span>
                 <span className="host-target-card__footer">
-                  <span>Load {String(metrics.load)}</span>
+                  <span title={reachability.reason}>Load {String(metrics.load)}</span>
                   <span>{selected ? '已加入上下文' : '点击加入'}</span>
                 </span>
               </button>
@@ -400,6 +423,15 @@ function AppShellInner() {
           setRoutePinnedHostId(null)
           setSelectedHosts([])
         }}>清空</Button>
+        <Button
+          icon={<PlusOutlined />}
+          onClick={() => {
+            setActivePopover(null)
+            navigate('/hosts?new=1')
+          }}
+        >
+          新增主机
+        </Button>
         <Button
           type="primary"
           onClick={() => {

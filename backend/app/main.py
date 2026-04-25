@@ -31,7 +31,12 @@ async def metric_collection_loop() -> None:
                     try:
                         metrics = await HostInspector.metrics(host, credential)
                         host.metrics_json = metrics
-                        host.last_seen_at = now()
+                        metrics_success = (metrics.get("raw") or {}).get("success") is not False
+                        if metrics_success:
+                            host.status = "online"
+                            host.last_seen_at = now()
+                        else:
+                            host.status = "offline"
                         session.add(host)
                         session.commit()
                         MonitoringCoreService.record_sample(session, host=host, metrics=metrics, source="background-loop")
