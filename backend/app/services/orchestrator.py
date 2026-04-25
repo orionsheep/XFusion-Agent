@@ -386,6 +386,183 @@ def _build_generic_report(
     return "\n".join(lines).strip(), meta, summary
 
 
+def _extract_service_discovery_payload(item: dict[str, Any]) -> dict[str, Any]:
+    action_result = item.get("action_result") or {}
+    if isinstance(action_result.get("json"), dict):
+        return action_result["json"]
+    stdout = (action_result.get("stdout") or "").strip()
+    if not stdout:
+        return {"service_count": 0, "services": []}
+    try:
+        payload = json.loads(stdout)
+        return payload if isinstance(payload, dict) else {"service_count": 0, "services": []}
+    except Exception:
+        return {"service_count": 0, "services": []}
+
+
+def _format_ports(ports: Any) -> str:
+    if isinstance(ports, list) and ports:
+        return ", ".join(str(port) for port in ports[:8])
+    return "-"
+
+
+def _service_runtime(service: dict[str, Any]) -> str:
+    return str(service.get("runtime") or service.get("runtime_type") or "unknown")
+
+
+def _service_status(service: dict[str, Any]) -> str:
+    return str(service.get("status") or "unknown")
+
+
+def _build_service_discovery_report(
+    *,
+    prompt: str,
+    per_host_results: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any], str]:
+    focus_pm2 = "pm2" in prompt.lower()
+    success_count = sum(1 for item in per_host_results if item.get("success"))
+    failed_count = len(per_host_results) - success_count
+    host_payloads: list[dict[str, Any]] = []
+    runtime_hosts: dict[str, set[str]] = {}
+    runtime_counts: dict[str, int] = {}
+    total_services = 0
+    pm2_services: list[dict[str, Any]] = []
+
+    for item in per_host_results:
+        payload = _extract_service_discovery_payload(item)
+        services = payload.get("services") if isinstance(payload.get("services"), list) else []
+        total_services += int(payload.get("service_count") or len(services))
+        host_name = str(item.get("host_name") or f"host-{item.get('host_id')}")
+        host_payloads.append({"item": item, "payload": payload, "services": services, "host_name": host_name})
+        for service in services:
+            runtime = _service_runtime(service)
+            runtime_counts[runtime] = runtime_counts.get(runtime, 0) + 1
+            runtime_hosts.setdefault(runtime, set()).add(host_name)
+            if runtime == "pm2":
+                pm2_services.append({"host_name": host_name, **service})
+
+    pm2_count_by_host = {
+        host_payload["host_name"]: sum(1 for service in host_payload["services"] if _service_runtime(service) == "pm2")
+        for host_payload in host_payloads
+    }
+    if focus_pm2:
+        summary = (
+            f"PM2 项目盘点完成：检查 {len(per_host_results)} 台主机，"
+            f"成功 {success_count} 台，发现 {len(pm2_services)} 个 PM2 项目。"
+        )
+        title = "PM2 项目盘点报告"
+    else:
+        summary = (
+            f"服务发现完成：检查 {len(per_host_results)} 台主机，"
+            f"成功 {success_count} 台，发现 {total_services} 个服务条目。"
+        )
+        title = "主机服务发现报告"
+
+    lines = [
+        f"# {title}",
+        "",
+        "## 执行摘要",
+        f"- 请求：{prompt}",
+        f"- 检查主机数：{len(per_host_results)}",
+        f"- 成功：{success_count}",
+        f"- 失败：{failed_count}",
+        f"- 服务条目总数：{total_services}",
+    ]
+    if focus_pm2:
+        lines.append(f"- PM2 项目总数：{len(pm2_services)}")
+    lines.extend(["", "## 运行时概览", "", "| 运行时 | 数量 | 涉及主机 |", "| --- | ---: | --- |"])
+    for runtime, count in sorted(runtime_counts.items(), key=lambda pair: (-pair[1], pair[0])):
+        hosts = "、".join(sorted(runtime_hosts.get(runtime, set()))) or "-"
+        lines.append(f"| {runtime} | {count} | {hosts} |")
+    if not runtime_counts:
+        lines.append("| - | 0 | - |")
+
+    if focus_pm2:
+        lines.extend(["", "## PM2 项目", ""])
+        if pm2_services:
+            lines.extend(["| 主机 | 项目 | 状态 | 端口 | 工作负载 |", "| --- | --- | --- | --- | --- |"])
+            for service in pm2_services:
+                lines.append(
+                    "| {host} | {name} | {status} | {ports} | {workload} |".format(
+                        host=service.get("host_name"),
+                        name=service.get("name") or "-",
+                        status=_service_status(service),
+                        ports=_format_ports(service.get("ports")),
+                        workload=service.get("workload") or "-",
+                    )
+                )
+        else:
+            lines.append("未在当前纳管主机上发现 PM2 项目。")
+            lines.append("")
+            lines.append("可能原因：目标服务器没有安装 PM2、PM2 当前没有进程、或 PM2 运行在非当前 SSH 用户上下文中。")
+
+    lines.extend(["", "## 逐主机结果"])
+    for host_payload in host_payloads:
+        item = host_payload["item"]
+        services = host_payload["services"]
+        host_name = host_payload["host_name"]
+        runtime_summary: dict[str, int] = {}
+        for service in services:
+            runtime = _service_runtime(service)
+            runtime_summary[runtime] = runtime_summary.get(runtime, 0) + 1
+        summary_text = "、".join(f"{runtime} {count}" for runtime, count in sorted(runtime_summary.items())) or "未发现服务"
+        lines.extend(
+            [
+                "",
+                f"### {host_name}",
+                f"- 状态：{'成功' if item.get('success') else '失败'}",
+                f"- 服务条目：{len(services)}",
+                f"- 运行时分布：{summary_text}",
+            ]
+        )
+        if focus_pm2:
+            lines.append(f"- PM2 项目：{pm2_count_by_host.get(host_name, 0)}")
+            host_services = [service for service in services if _service_runtime(service) == "pm2"]
+        else:
+            host_services = sorted(
+                services,
+                key=lambda service: (_service_runtime(service) == "systemd", _service_runtime(service), str(service.get("name") or "")),
+            )[:18]
+        if host_services:
+            lines.extend(["", "| 名称 | 运行时 | 状态 | 端口 | 工作负载 |", "| --- | --- | --- | --- | --- |"])
+            for service in host_services:
+                lines.append(
+                    "| {name} | {runtime} | {status} | {ports} | {workload} |".format(
+                        name=service.get("name") or "-",
+                        runtime=_service_runtime(service),
+                        status=_service_status(service),
+                        ports=_format_ports(service.get("ports")),
+                        workload=service.get("workload") or "-",
+                    )
+                )
+        stderr = ((item.get("action_result") or {}).get("stderr") or "").strip()
+        if stderr:
+            lines.extend(["", f"> 采集错误：{stderr[:500]}"])
+
+    lines.extend(["", "## 建议动作"])
+    if focus_pm2 and not pm2_services:
+        lines.append("- 如果确认服务器上存在 PM2 项目，建议检查 PM2 是否由其他用户运行，例如 `root` 与应用用户的 PM2 进程列表可能不同。")
+        lines.append("- 可以进一步让 Agent 针对单台主机执行 PM2 用户上下文排查。")
+    elif focus_pm2:
+        lines.append("- 对 PM2 项目较多的主机，建议继续查看 `pm2 monit` 指标、日志路径和启动脚本，确认是否需要纳入统一发布流程。")
+    else:
+        lines.append("- 优先关注非 systemd 的业务运行时，例如 PM2、Docker、Supervisor 和 Kubernetes，因为这些更可能对应业务部署。")
+
+    meta = {
+        "host_count": len(per_host_results),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "risk_hosts": [item["host_name"] for item in per_host_results if not item.get("success")],
+        "primary_metrics": {
+            "service_count": total_services,
+            "runtime_counts": runtime_counts,
+            "pm2_count": len(pm2_services),
+            "focus": "pm2" if focus_pm2 else "all",
+        },
+    }
+    return "\n".join(lines).strip(), meta, summary
+
+
 def _build_error_report(title: str, summary: str, *, reason: str | None = None) -> dict[str, Any]:
     lines = [
         f"# {title}",
@@ -1100,6 +1277,12 @@ class GoalDrivenOrchestrator:
         elif action_type == "discover_services":
             services = await HostInspector.discover_services(host, credential)
             stored = ServiceSync.sync(self.session, host, services)
+            latest_raw_metrics = (host.metrics_json or {}).get("raw") if isinstance(host.metrics_json, dict) else None
+            latest_unreachable = (
+                host.status == "offline"
+                and isinstance(latest_raw_metrics, dict)
+                and latest_raw_metrics.get("success") is False
+            )
             rows = [
                 {
                     "name": service.name,
@@ -1112,6 +1295,15 @@ class GoalDrivenOrchestrator:
                 }
                 for service in stored[:80]
             ]
+            if not stored and latest_unreachable:
+                stderr = str(latest_raw_metrics.get("stderr") or "Host is offline")
+                return {
+                    "success": False,
+                    "exit_code": int(latest_raw_metrics.get("exit_code") or 255),
+                    "stdout": json.dumps({"service_count": 0, "services": []}, ensure_ascii=False, indent=2),
+                    "stderr": stderr,
+                    "json": {"service_count": 0, "services": []},
+                }
             return {
                 "success": True,
                 "exit_code": 0,
@@ -1311,6 +1503,18 @@ class GoalDrivenOrchestrator:
                 "summary": summary,
                 "per_host": per_host_results,
                 "report_kind": "analysis",
+                "report_markdown": report_markdown,
+                "report_meta": report_meta,
+            }
+        if plan.action_type == "discover_services":
+            report_markdown, report_meta, summary = _build_service_discovery_report(
+                prompt=prompt,
+                per_host_results=per_host_results,
+            )
+            return {
+                "summary": summary,
+                "per_host": per_host_results,
+                "report_kind": "service_discovery",
                 "report_markdown": report_markdown,
                 "report_meta": report_meta,
             }
