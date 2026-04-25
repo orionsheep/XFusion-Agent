@@ -50,7 +50,7 @@ from ..services.security import (
     require_roles,
 )
 from ..services.llm_router import registry
-from ..services.voice import VoiceTranscriptionError, transcribe_with_siliconflow
+from ..services.voice import VoiceTranscriptionError, transcribe_with_siliconflow_fallback
 
 
 router = APIRouter()
@@ -201,12 +201,12 @@ async def transcribe_voice(
     audio_bytes = await file.read()
     selected_model = (model or settings.siliconflow_asr_model).strip()
     try:
-        result = await transcribe_with_siliconflow(
+        result = await transcribe_with_siliconflow_fallback(
             api_key=api_key,
             audio_bytes=audio_bytes,
             filename=file.filename or "voice.webm",
             content_type=file.content_type or "audio/webm",
-            model=selected_model,
+            preferred_model=selected_model,
         )
     except VoiceTranscriptionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

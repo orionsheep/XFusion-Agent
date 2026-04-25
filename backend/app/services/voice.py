@@ -6,6 +6,7 @@ import httpx
 
 
 SILICONFLOW_TRANSCRIPTION_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
+SILICONFLOW_ASR_MODELS = ("FunAudioLLM/SenseVoiceSmall", "TeleAI/TeleSpeechASR")
 
 
 @dataclass
@@ -47,3 +48,37 @@ async def transcribe_with_siliconflow(
     if not text:
         raise VoiceTranscriptionError("SiliconFlow 未返回转写文本")
     return TranscriptionResult(text=text, model=model)
+
+
+async def transcribe_with_siliconflow_fallback(
+    *,
+    api_key: str,
+    audio_bytes: bytes,
+    filename: str,
+    content_type: str,
+    preferred_model: str | None,
+) -> TranscriptionResult:
+    candidates: list[str] = []
+    if preferred_model and preferred_model in SILICONFLOW_ASR_MODELS:
+        candidates.append(preferred_model)
+    candidates.extend(model for model in SILICONFLOW_ASR_MODELS if model not in candidates)
+
+    failures: list[str] = []
+    for model in candidates:
+        try:
+            return await transcribe_with_siliconflow(
+                api_key=api_key,
+                audio_bytes=audio_bytes,
+                filename=filename,
+                content_type=content_type,
+                model=model,
+            )
+        except VoiceTranscriptionError as exc:
+            failures.append(f"{model}: {exc}")
+
+    raise VoiceTranscriptionError(
+        "SiliconFlow 可用语音转写模型测试均失败；已测试 "
+        + "、".join(candidates)
+        + "。失败原因："
+        + " | ".join(failures)
+    )

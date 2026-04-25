@@ -1696,10 +1696,13 @@ body::before {
 .kimi-sidebar {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-width: 0;
+  min-height: 0;
   padding: 16px 14px;
   border-right: 1px solid #e5e7eb;
   background: #f7f8fa;
+  overflow: hidden;
 }
 
 .kimi-sidebar__top,
@@ -1713,15 +1716,18 @@ body::before {
 .kimi-sidebar__top {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .kimi-sidebar__middle {
+  flex-shrink: 0;
   padding-block: 10px;
   border-top: 1px solid #eceef1;
   border-bottom: 1px solid #eceef1;
 }
 
 .kimi-sidebar__bottom {
+  flex-shrink: 0;
   padding-top: 10px;
 }
 
@@ -1822,9 +1828,11 @@ body::before {
 .kimi-sidebar__history {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   gap: 8px;
   min-height: 0;
   margin-top: 8px;
+  overflow: hidden;
 }
 
 .kimi-sidebar__history-title {
@@ -1837,9 +1845,11 @@ body::before {
 .kimi-sidebar__history-list {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   gap: 4px;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
   scrollbar-color: #d4d8df transparent;
@@ -2004,19 +2014,22 @@ body::before {
 }
 
 .agent-stage--idle {
-  justify-content: center;
+  justify-content: center !important;
+  padding-bottom: clamp(22px, 8vh, 96px);
 }
 
 .agent-stage--idle .agent-stage__stream {
-  flex: 0 0 auto;
+  flex: 0 0 auto !important;
+  height: auto;
   min-height: auto;
-  overflow: visible;
+  overflow: visible !important;
   padding: 0 clamp(20px, 3vw, 40px);
 }
 
 .agent-stage__empty {
   gap: 14px;
   max-width: 760px;
+  margin: 0 auto !important;
   padding: 0;
 }
 
@@ -2080,11 +2093,12 @@ body::before {
     0 18px 46px rgba(15, 23, 42, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.86);
   backdrop-filter: none;
+  overflow: visible;
 }
 
 .agent-stage__composer--spotlight {
   width: min(820px, calc(100% - 48px));
-  margin: 28px auto 0;
+  margin: 28px auto 0 !important;
 }
 
 .agent-stage__composer .ant-input {
@@ -2105,8 +2119,14 @@ body::before {
 }
 
 .agent-stage__composer-suggestions {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: -48px;
+  z-index: 2;
   gap: 8px;
-  padding-top: 2px;
+  padding: 0;
+  pointer-events: none;
 }
 
 .agent-stage__quick-chip {
@@ -2114,9 +2134,11 @@ body::before {
   padding: 5px 12px;
   border: 1px solid #eceef1;
   border-radius: 9px !important;
-  background: #f7f8fa;
+  background: rgba(247, 248, 250, 0.9);
   color: #4b5563;
-  box-shadow: none;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
 }
 
 .agent-stage__quick-chip:hover {
@@ -2307,13 +2329,35 @@ body::before {
 .workspace-overlay__panel {
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: auto;
   width: min(1280px, 100%);
+  height: 100%;
+  min-width: min(760px, 92vw);
+  min-height: min(460px, 80vh);
+  max-width: 100%;
+  max-height: 100%;
   border: 1px solid #e5e7eb;
   border-radius: 10px !important;
   background: #fff;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.16);
   backdrop-filter: none;
+  resize: both;
+  overflow: hidden;
+}
+
+.workspace-overlay__panel::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 4;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 0 45%, #c0c6ce 46% 54%, transparent 55%),
+    linear-gradient(135deg, transparent 0 64%, #d4d8df 65% 72%, transparent 73%);
+  opacity: 0.85;
 }
 
 .workspace-overlay__dragbar {
