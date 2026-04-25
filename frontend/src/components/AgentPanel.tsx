@@ -162,8 +162,55 @@ function getStepStatusColor(status?: string) {
   if (status === 'completed' || status === 'succeeded') return 'green'
   if (status === 'failed') return 'red'
   if (status === 'pending') return 'gold'
-  if (status === 'running') return 'blue'
+  if (status === 'running' || status === 'started') return 'blue'
+  if (status === 'queued') return 'gold'
   return 'default'
+}
+
+function getStepTone(status?: string) {
+  if (status === 'completed' || status === 'succeeded') return 'success'
+  if (status === 'failed') return 'danger'
+  if (status === 'pending') return 'warn'
+  if (status === 'running') return 'active'
+  if (status === 'started') return 'started'
+  return 'idle'
+}
+
+function getStepStatusLabel(status?: string) {
+  return {
+    completed: '已完成',
+    succeeded: '成功',
+    failed: '失败',
+    pending: '等待',
+    queued: '已排队',
+    running: '运行中',
+    started: '已启动',
+  }[String(status || '')] ?? '未知'
+}
+
+function getDisplayStepStatus(step: any, taskStatus: string, index: number, steps: any[]) {
+  const status = step?.status
+  if ((status === 'running' || status === 'pending') && taskStatus !== 'running') {
+    const hasLaterTerminalStep = steps.slice(index + 1).some((item: any) => (
+      item?.step_type === step?.step_type
+      && item?.title === step?.title
+      && ['completed', 'succeeded', 'failed'].includes(String(item?.status))
+    ))
+    if (hasLaterTerminalStep || ['succeeded', 'failed'].includes(taskStatus)) {
+      return status === 'running' ? 'started' : 'queued'
+    }
+  }
+  return status || 'unknown'
+}
+
+function getStepPhaseLabel(stepType?: string) {
+  return {
+    observe: '观察',
+    analyze: '分析',
+    act: '执行',
+    verify: '校验',
+    approval: '审批',
+  }[String(stepType || '')] ?? '步骤'
 }
 
 function getStepSummary(step: any) {
@@ -177,6 +224,45 @@ function getStepSummary(step: any) {
   if (output.plan?.action_type) return `动作：${output.plan.action_type}`
   if (step?.input_json?.action_type) return `动作：${step.input_json.action_type}`
   return step?.title ?? '等待执行'
+}
+
+function getStepHostRows(step: any, hostNameMap: Map<number, string>) {
+  const perHost = step?.output_json?.per_host
+  if (!Array.isArray(perHost)) return []
+  return perHost.map((item: any) => ({
+    hostName: hostNameMap.get(Number(item.host_id)) ?? item.host_name ?? `host-${item.host_id}`,
+    success: Boolean(item.success),
+    stderr: String(item?.action_result?.stderr || item?.verification_result?.stderr || '').trim(),
+  }))
+}
+
+function getStepMeta(step: any) {
+  const input = step?.input_json ?? {}
+  const output = step?.output_json ?? {}
+  const plan = output.plan ?? {}
+  const values: Array<{ label: string; value: string }> = []
+  const actionType = plan.action_type ?? input.action_type
+  const hostIds = input.host_ids
+  const criteria = input.criteria
+  if (actionType) values.push({ label: '动作', value: String(actionType) })
+  if (Array.isArray(hostIds)) values.push({ label: '目标', value: `${hostIds.length} 台主机` })
+  if (Array.isArray(criteria)) values.push({ label: '标准', value: `${criteria.length} 条` })
+  if (Array.isArray(output.hosts)) values.push({ label: '上下文', value: `${output.hosts.length} 台主机` })
+  if (output.plan?.policy?.risk_level) values.push({ label: '风险', value: String(output.plan.policy.risk_level) })
+  return values
+}
+
+function getStepPreview(step: any) {
+  const output = step?.output_json ?? {}
+  if (typeof output.message === 'string') return output.message
+  if (output.plan?.plan_explanation) return String(output.plan.plan_explanation)
+  if (Array.isArray(output.per_host)) {
+    const failed = output.per_host
+      .filter((item: any) => !item.success)
+      .map((item: any) => item.host_name ?? `host-${item.host_id}`)
+    if (failed.length) return `失败主机：${failed.join('、')}`
+  }
+  return ''
 }
 
 function getRunningStepIndex(steps: any[]) {
@@ -553,6 +639,17 @@ export function AgentPanel() {
           const toolCalls = task.plan_json?.ai?.tool_calls ?? []
           const perHost = task.result_json?.per_host ?? []
           const steps = Array.isArray(task.steps) ? task.steps : []
+          const visibleSteps = steps.length
+            ? steps
+            : [
+              {
+                step_type: 'analyze',
+                title: '生成执行计划',
+                status: task.status === 'running' ? 'running' : task.status,
+                input_json: { action_type: task.plan_json?.action_type, host_ids: task.target_hosts },
+                output_json: { message: task.plan_json?.plan_explanation },
+              },
+            ]
           const runningStepIndex = getRunningStepIndex(steps)
           const finalReport = buildFallbackReport(task, hostNameMap)
           const visibleReport = task.id === streamingTaskId && streamingSummary
@@ -619,6 +716,67 @@ export function AgentPanel() {
                     </div>
                   </div>
                 ) : null}
+                <div className="agent-process-trace" aria-label="Agent 执行过程">
+                  <div className="agent-process-trace__header">
+                    <div>
+                      <span>AGENT RUN TRACE</span>
+                      <strong>执行过程</strong>
+                    </div>
+                    <Tag color={getTaskStatusColor(task.status)}>{task.status}</Tag>
+                  </div>
+                  <div className="agent-process-trace__rail">
+                    {visibleSteps.map((step: any, index: number) => {
+                      const hostRows = getStepHostRows(step, hostNameMap)
+                      const meta = getStepMeta(step)
+                      const preview = getStepPreview(step)
+                      const displayStatus = getDisplayStepStatus(step, task.status, index, visibleSteps)
+                      return (
+                        <section
+                          key={`${task.id}-process-step-${step.id ?? index}`}
+                          className={`agent-process-step is-${getStepTone(displayStatus)}`}
+                        >
+                          <div className="agent-process-step__marker">
+                            <span>{index + 1}</span>
+                          </div>
+                          <div className="agent-process-step__body">
+                            <div className="agent-process-step__topline">
+                              <div>
+                                <em>{getStepPhaseLabel(step.step_type)}</em>
+                                <strong>{step.title || step.step_type || 'Agent 步骤'}</strong>
+                              </div>
+                              <Tag color={getStepStatusColor(displayStatus)}>{getStepStatusLabel(displayStatus)}</Tag>
+                            </div>
+                            <p>{getStepSummary(step)}</p>
+                            {preview ? <small>{preview}</small> : null}
+                            {meta.length ? (
+                              <div className="agent-process-step__meta">
+                                {meta.map((item) => (
+                                  <span key={`${step.id ?? index}-${item.label}`}>
+                                    {item.label}: <b>{item.value}</b>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {hostRows.length ? (
+                              <div className="agent-process-step__hosts">
+                                {hostRows.map((row) => (
+                                  <span
+                                    key={`${task.id}-${step.id ?? index}-${row.hostName}`}
+                                    className={row.success ? 'is-success' : 'is-failed'}
+                                    title={row.stderr || undefined}
+                                  >
+                                    {row.hostName}
+                                    <b>{row.success ? '成功' : '失败'}</b>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </section>
+                      )
+                    })}
+                  </div>
+                </div>
                 <div className="agent-output__richtext">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {ensureMarkdown(visibleReport)}
@@ -627,9 +785,9 @@ export function AgentPanel() {
                     <span className="agent-output__cursor" aria-hidden="true">▍</span>
                   ) : null}
                 </div>
-                {(toolCalls.length || perHost.length) ? (
+                {(toolCalls.length || perHost.length || steps.length) ? (
                   <details className="agent-output__details">
-                    <summary>执行细节</summary>
+                    <summary>原始执行数据</summary>
                     <div className="agent-output__details-body">
                       <div className="agent-output__detail-line">
                         <span>任务类型</span>
