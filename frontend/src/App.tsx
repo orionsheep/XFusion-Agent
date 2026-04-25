@@ -12,6 +12,9 @@ const HostsPage = lazy(() => import('./pages/HostsPage').then((module) => ({ def
 const HostDetailPage = lazy(() =>
   import('./pages/HostDetailPage').then((module) => ({ default: module.HostDetailPage })),
 )
+const FileManagerPage = lazy(() =>
+  import('./pages/FileManagerPage').then((module) => ({ default: module.FileManagerPage })),
+)
 const TasksPage = lazy(() => import('./pages/TasksPage').then((module) => ({ default: module.TasksPage })))
 const ApprovalsPage = lazy(() =>
   import('./pages/ApprovalsPage').then((module) => ({ default: module.ApprovalsPage })),
@@ -72,6 +75,7 @@ function App() {
                 <Route path="overview" element={<DashboardPage />} />
                 <Route path="hosts" element={<HostsPage />} />
                 <Route path="hosts/:hostId" element={<HostDetailPage />} />
+                <Route path="files" element={<FileManagerPage />} />
                 <Route path="tasks" element={<TasksPage />} />
                 <Route path="approvals" element={<ApprovalsPage />} />
                 <Route path="audit" element={<AuditPage />} />

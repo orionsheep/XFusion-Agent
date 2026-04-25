@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlmodel import Session, select
 
 from ..core.database import get_session
@@ -21,6 +24,7 @@ from ..schemas.api import (
     PasswordChangeRequest,
     PasswordResetRequest,
     ProviderKeyUpsertRequest,
+    RemoteMkdirRequest,
     RuntimeProfileUpdateRequest,
     TaskExecuteRequest,
     UserCreateRequest,
@@ -31,6 +35,7 @@ from ..services.platform import (
     DashboardService,
     HostInspector,
     HostRepository,
+    RemoteFileManager,
     ServiceSync,
     now,
     serialize_model,
@@ -376,6 +381,145 @@ def get_host(
         **serialize_host(host),
         "services": [serialize_model(service) for service in services],
     }
+
+
+def _file_operation_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, FileExistsError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, (IsADirectoryError, PermissionError, ValueError)):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=502, detail=f"Remote file operation failed: {exc}")
+
+
+@router.get("/hosts/{host_id}/files")
+async def list_host_files(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    path: str = Query("/", description="Remote directory path"),
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    try:
+        return await RemoteFileManager.list_dir(host, credential, path)
+    except Exception as exc:
+        raise _file_operation_error(exc) from exc
+
+
+@router.get("/hosts/{host_id}/files/download")
+async def download_host_file(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    path: str = Query(..., description="Remote file path"),
+) -> FileResponse:
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    try:
+        payload = await RemoteFileManager.download_to_temp(host, credential, path)
+    except Exception as exc:
+        raise _file_operation_error(exc) from exc
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        host_id=host.id,
+        event_type="remote_file_downloaded",
+        payload={"path": payload["path"], "size": payload.get("size")},
+    )
+    return FileResponse(
+        payload["local_path"],
+        filename=payload["filename"],
+        background=BackgroundTask(lambda file_path: os.path.exists(file_path) and os.unlink(file_path), payload["local_path"]),
+    )
+
+
+@router.post("/hosts/{host_id}/files/upload")
+async def upload_host_file(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
+    file: UploadFile = File(...),
+    path: str = Form("/", description="Remote directory path"),
+    overwrite: bool = Form(False),
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    with tempfile.NamedTemporaryFile(prefix="xfusion-upload-", delete=False) as tmp:
+        local_path = tmp.name
+        while chunk := await file.read(1024 * 1024):
+            tmp.write(chunk)
+    try:
+        payload = await RemoteFileManager.upload(
+            host,
+            credential,
+            directory=path,
+            local_path=local_path,
+            filename=file.filename or "upload.bin",
+            overwrite=overwrite,
+        )
+    except Exception as exc:
+        raise _file_operation_error(exc) from exc
+    finally:
+        if os.path.exists(local_path):
+            os.unlink(local_path)
+        await file.close()
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        host_id=host.id,
+        event_type="remote_file_uploaded",
+        payload={"path": payload["path"], "size": payload.get("size"), "overwrite": overwrite},
+    )
+    return payload
+
+
+@router.post("/hosts/{host_id}/files/mkdir")
+async def create_host_directory(
+    host_id: int,
+    payload: RemoteMkdirRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    try:
+        result = await RemoteFileManager.mkdir(host, credential, payload.path, payload.recursive)
+    except Exception as exc:
+        raise _file_operation_error(exc) from exc
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        host_id=host.id,
+        event_type="remote_directory_created",
+        payload={"path": result["path"], "recursive": payload.recursive},
+    )
+    return result
+
+
+@router.delete("/hosts/{host_id}/files")
+async def delete_host_file(
+    host_id: int,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
+    path: str = Query(..., description="Remote file or directory path"),
+    recursive: bool = Query(False),
+) -> dict:
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    try:
+        result = await RemoteFileManager.delete(host, credential, path, recursive)
+    except Exception as exc:
+        raise _file_operation_error(exc) from exc
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        host_id=host.id,
+        event_type="remote_file_deleted",
+        payload={"path": result["path"], "recursive": recursive},
+    )
+    return result
 
 
 @router.post("/hosts/{host_id}/profile")

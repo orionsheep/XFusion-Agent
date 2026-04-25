@@ -4,6 +4,7 @@ import {
   CloseOutlined,
   DashboardOutlined,
   DeploymentUnitOutlined,
+  FolderOpenOutlined,
   PoweroffOutlined,
   PlusOutlined,
   SafetyCertificateOutlined,
@@ -36,6 +37,7 @@ type WorkspaceItem = {
 const workspaceItems: WorkspaceItem[] = [
   { key: '/overview', icon: <DashboardOutlined />, label: '总览', description: '全局态势与总览' },
   { key: '/hosts', icon: <DeploymentUnitOutlined />, label: '主机与服务', description: '主机纳管与服务详情' },
+  { key: '/files', icon: <FolderOpenOutlined />, label: '文件管理', description: '远程服务器文件上传下载' },
   { key: '/tasks', icon: <PoweroffOutlined />, label: '任务中心', description: 'Goal-driven 任务编排' },
   { key: '/approvals', icon: <SafetyCertificateOutlined />, label: '审批中心', description: '高风险操作审批' },
   { key: '/audit', icon: <AuditOutlined />, label: '审计日志', description: '执行留痕与追踪' },

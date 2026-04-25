@@ -75,6 +75,11 @@ class TaskExecuteRequest(BaseModel):
     model: str | None = None
 
 
+class RemoteMkdirRequest(BaseModel):
+    path: str
+    recursive: bool = True
+
+
 class ApprovalDecisionRequest(BaseModel):
     approved: bool
     reason: str | None = None

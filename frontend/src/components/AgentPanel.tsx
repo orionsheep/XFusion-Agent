@@ -289,7 +289,7 @@ export function AgentPanel() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
-  const streamedTaskRef = useRef<number | null>(null)
+  const streamedTaskRef = useRef<string | null>(null)
   const queryClient = useQueryClient()
   const {
     prompt,
@@ -319,7 +319,15 @@ export function AgentPanel() {
 
   const executeMutation = useMutation({
     mutationFn: executeTask,
-    onSuccess: () => {
+    onSuccess: (task: any) => {
+      queryClient.setQueryData(['tasks'], (oldTasks: any[] | undefined) => {
+        const currentTasks = Array.isArray(oldTasks) ? oldTasks : []
+        const taskIndex = currentTasks.findIndex((item) => item.id === task.id)
+        if (taskIndex >= 0) {
+          return currentTasks.map((item, index) => (index === taskIndex ? task : item))
+        }
+        return [task, ...currentTasks]
+      })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
       queryClient.invalidateQueries({ queryKey: ['hosts'] })
@@ -400,8 +408,9 @@ export function AgentPanel() {
 
   useEffect(() => {
     if (!latestTaskId || !latestTaskReport || pendingDraft) return
-    if (streamedTaskRef.current === latestTaskId) return
-    streamedTaskRef.current = latestTaskId
+    const reportSignature = `${latestTaskId}:${latestTask?.status ?? 'unknown'}:${latestTaskReport.length}:${latestTaskReport.slice(0, 48)}`
+    if (streamedTaskRef.current === reportSignature) return
+    streamedTaskRef.current = reportSignature
     setStreamingTaskId(latestTaskId)
     setStreamingSummary('')
 
@@ -416,7 +425,7 @@ export function AgentPanel() {
     }, 36)
 
     return () => window.clearInterval(timer)
-  }, [hostNameMap, latestTaskId, latestTaskReport, pendingDraft])
+  }, [hostNameMap, latestTask?.status, latestTaskId, latestTaskReport, pendingDraft])
 
   const startVoiceInput = () => {
     if (listening) {

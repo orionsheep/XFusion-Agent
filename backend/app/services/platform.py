@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import posixpath
 import re
+import stat
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -304,6 +307,183 @@ class SSHConnector:
             }
         except Exception as exc:
             return {"success": False, "exit_code": 255, "stdout": "", "stderr": str(exc)}
+
+
+MAX_FILE_TRANSFER_BYTES = 200 * 1024 * 1024
+PROTECTED_DELETE_PATHS = {
+    "/",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib64",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/sys",
+    "/tmp",
+    "/usr",
+    "/var",
+}
+
+
+def normalize_remote_path(path: str | None, *, default: str = "/") -> str:
+    value = (path or default).strip() or default
+    if "\x00" in value:
+        raise ValueError("remote path contains invalid null byte")
+    if value.startswith("~"):
+        return value
+    if not value.startswith("/"):
+        value = f"/{value}"
+    normalized = posixpath.normpath(value)
+    return "/" if normalized == "." else normalized
+
+
+def join_remote_path(directory: str, filename: str) -> str:
+    safe_name = posixpath.basename(filename.strip())
+    if not safe_name or safe_name in {".", ".."} or "\x00" in safe_name:
+        raise ValueError("invalid filename")
+    return posixpath.join(normalize_remote_path(directory), safe_name)
+
+
+def is_top_level_remote_path(path: str) -> bool:
+    normalized = normalize_remote_path(path)
+    return normalized != "/" and posixpath.dirname(normalized.rstrip("/")) == "/"
+
+
+def format_permissions(mode: int | None) -> str:
+    if mode is None:
+        return "unknown"
+    return stat.filemode(mode)
+
+
+def infer_file_type(mode: int | None) -> str:
+    if mode is None:
+        return "unknown"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISREG(mode):
+        return "file"
+    return "other"
+
+
+class RemoteFileManager:
+    @staticmethod
+    async def list_dir(host: Host, credential: HostCredential | None, path: str | None = "/") -> dict[str, Any]:
+        remote_path = normalize_remote_path(path)
+        async with await SSHConnector._connect(host, credential) as conn:
+            async with conn.start_sftp_client() as sftp:
+                resolved = await sftp.realpath(remote_path)
+                entries: list[dict[str, Any]] = []
+                async for item in sftp.scandir(remote_path):
+                    name = item.filename.decode() if isinstance(item.filename, bytes) else str(item.filename)
+                    if name in {".", ".."}:
+                        continue
+                    attrs = item.attrs
+                    mode = attrs.permissions
+                    full_path = posixpath.join(remote_path.rstrip("/") or "/", name)
+                    entries.append(
+                        {
+                            "name": name,
+                            "path": full_path,
+                            "type": infer_file_type(mode),
+                            "size": attrs.size,
+                            "permissions": format_permissions(mode),
+                            "uid": attrs.uid,
+                            "gid": attrs.gid,
+                            "owner": attrs.owner,
+                            "group": attrs.group,
+                            "mtime": attrs.mtime,
+                        }
+                    )
+                entries.sort(key=lambda item: (item["type"] != "directory", item["name"].lower()))
+                return {
+                    "host_id": host.id,
+                    "host_name": host.name,
+                    "path": str(resolved),
+                    "parent": None if remote_path in {"/", "~"} else posixpath.dirname(remote_path.rstrip("/")) or "/",
+                    "entries": entries,
+                }
+
+    @staticmethod
+    async def mkdir(host: Host, credential: HostCredential | None, path: str, recursive: bool = True) -> dict[str, Any]:
+        remote_path = normalize_remote_path(path)
+        async with await SSHConnector._connect(host, credential) as conn:
+            async with conn.start_sftp_client() as sftp:
+                if recursive:
+                    await sftp.makedirs(remote_path, exist_ok=True)
+                else:
+                    await sftp.mkdir(remote_path)
+        return {"path": remote_path, "created": True}
+
+    @staticmethod
+    async def delete(host: Host, credential: HostCredential | None, path: str, recursive: bool = False) -> dict[str, Any]:
+        remote_path = normalize_remote_path(path)
+        if remote_path in PROTECTED_DELETE_PATHS or is_top_level_remote_path(remote_path):
+            raise ValueError(f"protected path cannot be deleted: {remote_path}")
+        async with await SSHConnector._connect(host, credential) as conn:
+            async with conn.start_sftp_client() as sftp:
+                if await sftp.isdir(remote_path):
+                    if recursive:
+                        await sftp.rmtree(remote_path)
+                    else:
+                        await sftp.rmdir(remote_path)
+                else:
+                    await sftp.remove(remote_path)
+        return {"path": remote_path, "deleted": True}
+
+    @staticmethod
+    async def upload(
+        host: Host,
+        credential: HostCredential | None,
+        *,
+        directory: str,
+        local_path: str,
+        filename: str,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        size = os.path.getsize(local_path)
+        if size > MAX_FILE_TRANSFER_BYTES:
+            raise ValueError("file is larger than the 200MB transfer limit")
+        remote_path = join_remote_path(directory, filename)
+        async with await SSHConnector._connect(host, credential) as conn:
+            async with conn.start_sftp_client() as sftp:
+                if not overwrite and await sftp.exists(remote_path):
+                    raise FileExistsError(f"remote file already exists: {remote_path}")
+                await sftp.put(local_path, remote_path)
+        return {"path": remote_path, "size": size, "uploaded": True}
+
+    @staticmethod
+    async def download_to_temp(host: Host, credential: HostCredential | None, path: str) -> dict[str, Any]:
+        remote_path = normalize_remote_path(path)
+        async with await SSHConnector._connect(host, credential) as conn:
+            async with conn.start_sftp_client() as sftp:
+                attrs = await sftp.stat(remote_path)
+                if infer_file_type(attrs.permissions) == "directory":
+                    raise IsADirectoryError("directory download is not supported yet")
+                if attrs.size is not None and attrs.size > MAX_FILE_TRANSFER_BYTES:
+                    raise ValueError("file is larger than the 200MB transfer limit")
+                suffix = posixpath.basename(remote_path) or "download.bin"
+                with tempfile.NamedTemporaryFile(prefix="xfusion-download-", suffix=f"-{suffix}", delete=False) as tmp:
+                    local_path = tmp.name
+                try:
+                    await sftp.get(remote_path, local_path)
+                except Exception:
+                    if os.path.exists(local_path):
+                        os.unlink(local_path)
+                    raise
+        return {
+            "local_path": local_path,
+            "filename": posixpath.basename(remote_path) or "download.bin",
+            "size": attrs.size,
+            "path": remote_path,
+        }
 
 
 class AgentConnector:

@@ -3529,6 +3529,81 @@ body::before {
   background: #fff;
 }
 
+.file-manager-page {
+  display: grid;
+  gap: 10px;
+}
+
+.file-manager-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(20, 184, 166, 0.10), transparent 34%),
+    linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,250,252,0.76));
+}
+
+.file-manager-shell {
+  min-height: 520px;
+}
+
+.file-manager-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.file-manager-pathbar {
+  flex: 1 1 520px;
+  min-width: 280px;
+}
+
+.file-manager-breadcrumb {
+  margin-bottom: 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(226, 232, 240, 0.86);
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.file-manager-breadcrumb button {
+  border: 0;
+  background: transparent;
+  color: #0f766e;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.file-manager-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 650;
+  text-align: left;
+}
+
+.file-manager-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-manager-name .anticon-folder-open {
+  color: #0f766e;
+}
+
+.file-manager-name .anticon-file {
+  color: #64748b;
+}
+
 @media (max-width: 1024px) {
   .app-shell.kimi-shell {
     grid-template-columns: 72px minmax(0, 1fr);

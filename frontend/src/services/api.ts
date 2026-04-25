@@ -137,6 +137,38 @@ export async function fetchServices() {
   return data
 }
 
+export async function listRemoteFiles(hostId: number, path = '/') {
+  const { data } = await api.get(`/hosts/${hostId}/files`, { params: { path } })
+  return data
+}
+
+export async function createRemoteDirectory(hostId: number, path: string, recursive = true) {
+  const { data } = await api.post(`/hosts/${hostId}/files/mkdir`, { path, recursive })
+  return data
+}
+
+export async function uploadRemoteFile(hostId: number, path: string, file: File, overwrite = true) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('path', path)
+  formData.append('overwrite', String(overwrite))
+  const { data } = await api.post(`/hosts/${hostId}/files/upload`, formData)
+  return data
+}
+
+export async function downloadRemoteFile(hostId: number, path: string) {
+  const response = await api.get(`/hosts/${hostId}/files/download`, {
+    params: { path },
+    responseType: 'blob',
+  })
+  return response.data as Blob
+}
+
+export async function deleteRemoteFile(hostId: number, path: string, recursive = false) {
+  const { data } = await api.delete(`/hosts/${hostId}/files`, { params: { path, recursive } })
+  return data
+}
+
 export async function fetchTasks() {
   const { data } = await api.get('/tasks')
   return data
