@@ -10,7 +10,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Layout, Menu, Popover, Select, Space, Tag, Typography, message } from 'antd'
+import { Button, Input, Layout, Menu, Popover, Select, Tag, Typography, message } from 'antd'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AgentPanel } from './AgentPanel'
@@ -23,7 +23,7 @@ import {
   updateRuntimeLlmProfile,
 } from '../services/api'
 
-const { Header, Content } = Layout
+const { Content } = Layout
 
 type WorkspaceItem = {
   key: string
@@ -333,19 +333,108 @@ function AppShellInner() {
   )
 
   return (
-    <Layout className="app-shell">
+    <Layout className="app-shell kimi-shell">
       {contextHolder}
-      <Header className="app-shell__header">
-        <div className="topbar">
-          <div className="topbar__brand">
-            <button type="button" className="topbar__brand-button" onClick={() => navigate('/')}>
-              XFusion Agent
+      <aside className="kimi-sidebar">
+        <div className="kimi-sidebar__top">
+          <div className="kimi-sidebar__brand-row">
+            <button type="button" className="kimi-sidebar__brand" onClick={() => navigate('/')}>
+              <span className="kimi-sidebar__brand-mark">X</span>
+              <span>XFusion Agent</span>
             </button>
-            <Typography.Text className="topbar__subline">
-              agent-first operations console
-            </Typography.Text>
+            <button type="button" className="kimi-sidebar__collapse" aria-label="收起侧边栏">
+              ⌘
+            </button>
           </div>
-          <Space size={8} wrap>
+
+          <button
+            type="button"
+            className="kimi-sidebar__new-chat"
+            onClick={() => {
+              createNewConversation()
+              messageApi.success('已创建新的 Agent 会话')
+              navigate('/')
+            }}
+          >
+            <PlusOutlined />
+            <span>新建会话</span>
+            <kbd>⌘</kbd><kbd>K</kbd>
+          </button>
+
+          <nav className="kimi-sidebar__nav" aria-label="工作区">
+            {workspaceItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`kimi-sidebar__nav-item${selectedWorkspaceKey === item.key && workspaceOpen ? ' is-active' : ''}`}
+                onClick={() => {
+                  navigate(item.key)
+                  setActivePopover(null)
+                }}
+              >
+                <span className="kimi-sidebar__nav-icon">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="kimi-sidebar__middle">
+          <Popover
+            trigger="click"
+            placement="right"
+            content={modelCard}
+            overlayClassName="control-popover"
+          >
+            <button type="button" className="kimi-sidebar__nav-item kimi-sidebar__nav-item--control">
+              <span className="kimi-sidebar__nav-icon"><SettingOutlined /></span>
+              <span>{modelLabel}</span>
+            </button>
+          </Popover>
+          <Popover
+            trigger="click"
+            placement="right"
+            content={hostsCard}
+            overlayClassName="control-popover"
+          >
+            <button type="button" className="kimi-sidebar__nav-item kimi-sidebar__nav-item--control">
+              <span className="kimi-sidebar__nav-icon"><DeploymentUnitOutlined /></span>
+              <span>{selectedHosts.length || totalHostCount} 台目标主机</span>
+            </button>
+          </Popover>
+        </div>
+
+        <div className="kimi-sidebar__bottom">
+          <button type="button" className="kimi-sidebar__nav-item">
+            <span className="kimi-sidebar__nav-icon">ⓘ</span>
+            <span>关于我们</span>
+          </button>
+          <button type="button" className="kimi-sidebar__nav-item">
+            <span className="kimi-sidebar__nav-icon">文</span>
+            <span>Language</span>
+          </button>
+          <button type="button" className="kimi-sidebar__nav-item">
+            <span className="kimi-sidebar__nav-icon">✉</span>
+            <span>用户反馈</span>
+          </button>
+          <button
+            type="button"
+            className="kimi-sidebar__user"
+            onClick={() => {
+              clearStoredToken()
+              navigate('/login')
+            }}
+          >
+            <span className="kimi-sidebar__avatar">A</span>
+            <span>退出</span>
+          </button>
+        </div>
+      </aside>
+
+      <Content className="app-shell__content kimi-canvas">
+        <AgentPanel />
+
+        <div className="kimi-floating-controls" aria-label="快捷控制">
             <Popover
               trigger="click"
               placement="bottomRight"
@@ -415,12 +504,7 @@ function AppShellInner() {
             >
               退出
             </Button>
-          </Space>
         </div>
-      </Header>
-
-      <Content className="app-shell__content">
-        <AgentPanel />
 
         {workspaceOpen ? (
           <div className="workspace-overlay">

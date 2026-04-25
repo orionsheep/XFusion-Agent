@@ -1,5 +1,6 @@
 import {
   AudioOutlined,
+  PlusOutlined,
   PlayCircleOutlined,
   RobotOutlined,
   UserOutlined,
@@ -513,11 +514,17 @@ export function AgentPanel() {
           )
         }) : (
           <div className="agent-stage__empty">
+            <div className="agent-stage__brand-orb" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              今天想让 Agent 处理什么？
+              想让 XFusion Agent 处理什么？
             </Typography.Title>
             <Typography.Paragraph className="agent-stage__empty-copy">
-              直接用自然语言描述目标。Agent 会结合当前主机、模型和工具能力，自动规划并返回结果。
+              直接描述运维目标。Agent 会结合目标主机、系统状态和工具能力，生成可执行计划并返回结构化结果。
             </Typography.Paragraph>
             <Space wrap size={[8, 8]} className="agent-stage__empty-picks">
               {quickPrompts.map((item) => (
@@ -535,16 +542,8 @@ export function AgentPanel() {
       </div>
 
       <div className={`agent-stage__composer${isIdle ? ' agent-stage__composer--spotlight' : ''}`}>
-        <div className="agent-stage__composer-statusbar">
-          <Tag color="geekblue">{activeModel}</Tag>
-          <Tag color="green">{selectedHosts.length} 台主机</Tag>
-          <Typography.Text type="secondary">
-            {selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
-            {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
-          </Typography.Text>
-        </div>
         <Input.TextArea
-          rows={4}
+          rows={isIdle ? 3 : 2}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onPressEnter={(event) => {
@@ -553,7 +552,7 @@ export function AgentPanel() {
               runPrompt()
             }
           }}
-          placeholder="给 Agent 一个目标，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
+          placeholder="尽管问 XFusion Agent，例如：分析这四台服务器里哪一台磁盘压力最大，并给出清理建议。"
         />
         {isIdle ? (
           <div className="agent-stage__composer-suggestions">
@@ -569,17 +568,31 @@ export function AgentPanel() {
           </div>
         ) : null}
         <div className="agent-stage__composer-actions">
-          <Button icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
-            {listening ? '正在听写' : '语音输入'}
-          </Button>
+          <div className="agent-stage__composer-left">
+            <Button className="agent-stage__tool-button" shape="circle" icon={<PlusOutlined />} aria-label="添加上下文" />
+            <Button className="agent-stage__agent-pill">Agent</Button>
+            <Button className="agent-stage__voice-button" icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
+              {listening ? '正在听写' : '语音输入'}
+            </Button>
+          </div>
+          <div className="agent-stage__composer-right">
+            <span className="agent-stage__runtime-pill">{activeModel}</span>
+            <span className="agent-stage__target-pill">{selectedHosts.length} 台主机</span>
+            <Typography.Text type="secondary" className="agent-stage__target-copy">
+              {selectedHostNames.slice(0, 3).join('、') || '未选择主机'}
+              {selectedHostNames.length > 3 ? ` 等 ${selectedHostNames.length} 台` : ''}
+            </Typography.Text>
+          </div>
           <Button
             type="primary"
+            shape="circle"
             icon={<PlayCircleOutlined />}
             disabled={!canExecute || Boolean(pendingDraft)}
             loading={dispatching}
             onClick={runPrompt}
+            aria-label={pendingDraft ? 'Agent 思考中' : '发送给 Agent'}
+            className="agent-stage__send-button"
           >
-            {pendingDraft ? 'Agent 思考中' : '发送给 Agent'}
           </Button>
         </div>
       </div>
