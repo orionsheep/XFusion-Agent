@@ -141,6 +141,19 @@ class ClaudeGatewayRuntime:
         )
 
     @staticmethod
+    def gateway_reachable(timeout_seconds: float = 0.8) -> bool:
+        if not ClaudeGatewayRuntime.credentials_available():
+            return False
+        headers = {"Authorization": f"Bearer {settings.gateway_auth_token}"}
+        base = settings.gateway_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=timeout_seconds) as client:
+                response = client.get(f"{base}/v1/models", headers=headers)
+            return response.is_success
+        except Exception:
+            return False
+
+    @staticmethod
     def environment() -> dict[str, str]:
         profile = ClaudeGatewayRuntime.current_profile()
         env = {
@@ -292,9 +305,80 @@ class ClaudeGatewayRuntime:
         async def dashboard_tool(_: dict[str, Any]) -> dict[str, Any]:
             return _tool_text({"overview": DashboardService.overview(session)})
 
+        @tool("get_execution_capabilities", "List the safe action types this control plane can execute.", {})
+        async def capabilities_tool(_: dict[str, Any]) -> dict[str, Any]:
+            return _tool_text(
+                {
+                    "actions": [
+                        {
+                            "action_type": "run_readonly_command",
+                            "risk": "L0",
+                            "description": "Generic read-only shell probes. Parameters: commands: string[]. State-changing commands are blocked by policy.",
+                        },
+                        {
+                            "action_type": "discover_services",
+                            "risk": "L0",
+                            "description": "Discover systemd, Docker, Docker Compose, PM2, Supervisor, Kubernetes and listening port services.",
+                        },
+                        {"action_type": "query_disk", "risk": "L0", "description": "Read filesystem usage."},
+                        {"action_type": "check_host_status", "risk": "L0", "description": "Read host connectivity and basic health."},
+                        {"action_type": "inspect_databases", "risk": "L0", "description": "Scan database ports, processes and discovered DB workloads."},
+                        {"action_type": "search_files", "risk": "L0", "description": "Find files or directories within a safe path scope."},
+                        {"action_type": "check_port", "risk": "L0", "description": "Inspect a listening TCP port."},
+                        {"action_type": "query_process", "risk": "L0", "description": "Inspect processes."},
+                        {"action_type": "diagnose_service", "risk": "L1", "description": "Collect status, logs and sockets for one service."},
+                        {"action_type": "restart_service", "risk": "L3", "description": "Restart a service after human approval."},
+                        {"action_type": "kill_process", "risk": "L3", "description": "Kill a process after human approval."},
+                        {"action_type": "create_linux_user", "risk": "L3", "description": "Create a Linux user after approval."},
+                        {"action_type": "delete_linux_user", "risk": "L3", "description": "Delete a Linux user after approval."},
+                    ],
+                    "blocked": ["delete_path", "modify_security_config", "bulk_permission_change"],
+                }
+            )
+
+        @tool(
+            "get_database_inventory",
+            "Get database-like services already discovered on selected hosts.",
+            {
+                "type": "object",
+                "properties": {
+                    "host_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    }
+                },
+                "required": ["host_ids"],
+                "additionalProperties": False,
+            },
+        )
+        async def database_inventory_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+            host_ids = [int(host_id) for host_id in arguments.get("host_ids", [])]
+            rows = list(session.exec(select(Service).where(Service.host_id.in_(host_ids))).all()) if host_ids else []
+            databases = []
+            for service in rows:
+                evidence = service.evidence_json or {}
+                if evidence.get("workload") != "database" and not evidence.get("database_engine"):
+                    continue
+                host = session.get(Host, service.host_id)
+                databases.append(
+                    {
+                        "host": {
+                            "id": service.host_id,
+                            "name": host.name if host else f"host-{service.host_id}",
+                        },
+                        "name": service.name,
+                        "runtime_type": service.runtime_type,
+                        "status": service.status,
+                        "ports": service.ports,
+                        "engine": evidence.get("database_engine") or "database",
+                        "source": evidence.get("discovery_source") or evidence.get("source"),
+                    }
+                )
+            return _tool_text({"databases": databases})
+
         return create_sdk_mcp_server(
             "xfusion-control-plane",
-            tools=[list_hosts_tool, selected_hosts_tool, dashboard_tool],
+            tools=[list_hosts_tool, selected_hosts_tool, dashboard_tool, capabilities_tool, database_inventory_tool],
         )
 
     @staticmethod
@@ -309,6 +393,11 @@ class ClaudeGatewayRuntime:
     ) -> ClaudeJsonResult | None:
         if not ClaudeGatewayRuntime.credentials_available():
             return None
+        if not ClaudeGatewayRuntime.gateway_reachable():
+            return ClaudeJsonResult(
+                payload=None,
+                errors=[f"Claude Agent SDK gateway unreachable: {settings.gateway_base_url}"],
+            )
 
         mcp_servers = {}
         if session is not None:

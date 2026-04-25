@@ -438,7 +438,10 @@ export function AgentPanel() {
               ?? (entry.pending ? pendingDraft?.hostIds : selectedHosts)
               ?? selectedHosts
             return (
-              <article key={entry.key} className="agent-message agent-message--user">
+              <article
+                key={entry.key}
+                className={`agent-message agent-message--user${entry.pending ? ' agent-message--pending' : ''}`}
+              >
                 <div className="agent-message__meta">
                   <Space size={6}>
                     <UserOutlined />
@@ -473,17 +476,38 @@ export function AgentPanel() {
                   </Space>
                 </div>
                 <div className="agent-output__surface agent-output__surface--pending">
-                  <div className="agent-typing">
-                    <span />
-                    <span />
-                    <span />
+                  <div className="agent-thinking">
+                    <div className="agent-thinking__orb" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                    <div className="agent-thinking__body">
+                      <div className="agent-thinking__phase">
+                        <strong>{pendingPhases[pendingPhaseIndex]}</strong>
+                        <span>Agent 正在规划、执行和校验，完成后会直接生成富文本结果。</span>
+                      </div>
+                      <div className="agent-thinking__steps" aria-label="Agent 执行阶段">
+                        {pendingPhases.map((phase, index) => (
+                          <span
+                            key={phase}
+                            className={[
+                              'agent-thinking__step',
+                              index === pendingPhaseIndex ? 'is-active' : '',
+                              index < pendingPhaseIndex ? 'is-done' : '',
+                            ].filter(Boolean).join(' ')}
+                          >
+                            {phase}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="agent-thinking__skeleton" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </div>
                   </div>
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    {pendingPhases[pendingPhaseIndex]}
-                  </Typography.Paragraph>
-                  <Typography.Text type="secondary" className="agent-message__phase-caption">
-                    Agent 正在持续规划和执行，结果会在当前线程里逐步返回。
-                  </Typography.Text>
                 </div>
               </article>
             )
@@ -496,8 +520,12 @@ export function AgentPanel() {
           const visibleReport = task.id === streamingTaskId && streamingSummary
             ? streamingSummary
             : finalReport
+          const isStreaming = task.id === streamingTaskId && visibleReport.length < finalReport.length
           return (
-            <article key={entry.key} className={`agent-output agent-output--${task.status}`}>
+            <article
+              key={entry.key}
+              className={`agent-output agent-output--${task.status}${isStreaming ? ' agent-output--streaming' : ''}`}
+            >
               <div className="agent-output__meta">
                 <Space size={6}>
                   <RobotOutlined />
@@ -520,7 +548,7 @@ export function AgentPanel() {
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {ensureMarkdown(visibleReport)}
                   </ReactMarkdown>
-                  {task.id === streamingTaskId && visibleReport.length < finalReport.length ? (
+                  {isStreaming ? (
                     <span className="agent-output__cursor" aria-hidden="true">▍</span>
                   ) : null}
                 </div>
@@ -645,7 +673,7 @@ export function AgentPanel() {
             loading={dispatching}
             onClick={runPrompt}
             aria-label={pendingDraft ? 'Agent 思考中' : '发送给 Agent'}
-            className="agent-stage__send-button"
+            className={`agent-stage__send-button${pendingDraft || dispatching ? ' agent-stage__send-button--sending' : ''}`}
           >
           </Button>
         </div>

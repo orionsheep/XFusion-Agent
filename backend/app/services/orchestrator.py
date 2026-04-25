@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..models.entities import Approval, Host, HostCredential, Service, Task, TaskStep, User
-from .claude_runtime import ClaudeGatewayRuntime
+from .claude_runtime import ClaudeGatewayRuntime, ClaudeJsonResult
 from .llm_router import LLMMessage, registry
 from .platform import (
     AgentConnector,
@@ -21,11 +21,14 @@ from .platform import (
     HostInspector,
     HostRepository,
     PolicyEngine,
+    ServiceSync,
     SSHConnector,
     jsonable,
     now,
+    redact_sensitive,
     settings,
     upsert_audit,
+    validate_readonly_commands,
 )
 from .monitoring import MonitoringCoreService
 
@@ -70,6 +73,64 @@ def _safe_path(path: str | None) -> str:
 
 def _safe_token(value: str | None) -> str:
     return shlex.quote((value or "").strip())
+
+
+def _mentions_service_inventory(prompt: str, lowered: str | None = None) -> bool:
+    lowered = lowered or prompt.lower()
+    chinese = prompt.replace("服务器", "").replace("服务端", "")
+    return any(word in chinese for word in ["服务", "应用", "容器", "部署", "进程管理"]) or any(
+        word in lowered for word in ["service", "container", "docker", "compose", "pm2", "supervisor", "kubernetes"]
+    )
+
+
+def _default_readonly_commands(prompt: str) -> list[str]:
+    lowered = prompt.lower()
+    commands = [
+        "hostname; uname -srmo; uptime",
+        "df -hT | head -n 30",
+        "free -h",
+        "ps aux --sort=-%cpu 2>/dev/null | head -n 15",
+        "ss -ltnp 2>/dev/null | head -n 40 || netstat -ltnp 2>/dev/null | head -n 40 || true",
+        "systemctl --failed --no-pager 2>/dev/null || true",
+    ]
+    if _mentions_service_inventory(prompt, lowered) or any(word in prompt for word in ["进程"]) or any(word in lowered for word in ["app", "process", "deployment"]):
+        commands.extend(
+            [
+                "systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | head -n 40 || true",
+                "docker ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>/dev/null || true",
+                "pm2 list --no-color 2>/dev/null || true",
+                "supervisorctl status 2>/dev/null || true",
+            ]
+        )
+    if any(word in prompt for word in ["网络", "端口", "连接"]) or any(word in lowered for word in ["network", "port", "listen", "connection"]):
+        commands.extend(["ip -brief addr 2>/dev/null || true", "ss -tunap 2>/dev/null | head -n 60 || true"])
+    if any(word in prompt for word in ["日志", "错误", "失败"]) or any(word in lowered for word in ["log", "error", "failed", "failure"]):
+        commands.extend(["journalctl -p warning -n 80 --no-pager 2>/dev/null || true"])
+    return commands[:10]
+
+
+def _coerce_readonly_commands(parameters: dict[str, Any], prompt: str | None = None) -> list[str]:
+    raw = parameters.get("commands") or parameters.get("command")
+    if isinstance(raw, list):
+        commands = [str(item).strip() for item in raw if str(item).strip()]
+    elif isinstance(raw, str) and raw.strip():
+        commands = [line.strip() for line in raw.splitlines() if line.strip()]
+    else:
+        commands = _default_readonly_commands(prompt or "")
+    return commands[:10]
+
+
+def _build_readonly_probe_script(commands: list[str]) -> tuple[str, list[str]]:
+    safe, problems = validate_readonly_commands(commands)
+    if not safe:
+        return "", problems
+    script_lines = ["set +e"]
+    for index, command in enumerate(commands, start=1):
+        label = command.replace("\n", " ")[:220]
+        script_lines.append(f"echo '__XFUSION_CMD_{index}__ {label}'")
+        script_lines.append(f"timeout 18 bash -lc {shlex.quote(command)}")
+        script_lines.append("printf '\\n'")
+    return "bash -lc " + shlex.quote("\n".join(script_lines)), []
 
 
 def _parse_df_output(stdout: str) -> list[dict[str, Any]]:
@@ -419,9 +480,24 @@ class ClaudePlanner:
         timeout_seconds: int = 20,
         model: str | None = None,
         api_keys: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ClaudeJsonResult | None:
         if not settings.claude_enabled:
             return None
+        sdk_errors: list[str] = []
+        sdk_result = await ClaudeGatewayRuntime.run_json_query(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            schema=schema,
+            session=session,
+            max_turns=max_turns,
+            timeout_seconds=timeout_seconds,
+        )
+        if sdk_result and sdk_result.payload is not None:
+            return sdk_result
+        if sdk_result and sdk_result.errors:
+            sdk_errors = sdk_result.errors
+        elif sdk_result and sdk_result.tool_calls:
+            sdk_errors = ["Claude Agent SDK called tools but did not return structured JSON."]
         try:
             text = await registry.chat_completion(
                 model=model or settings.model,
@@ -432,8 +508,20 @@ class ClaudePlanner:
                 timeout=timeout_seconds,
                 api_keys=api_keys,
             )
-            return _extract_json_payload(text)
-        except Exception:
+            payload = _extract_json_payload(text)
+            if not payload:
+                return None
+            return ClaudeJsonResult(
+                payload=payload,
+                raw_text=text,
+                model=model or settings.model,
+                errors=sdk_errors,
+                tool_calls=[],
+                session_id=None,
+            )
+        except Exception as exc:
+            if sdk_errors:
+                return ClaudeJsonResult(payload=None, errors=[*sdk_errors, str(exc)])
             return None
 
     @classmethod
@@ -464,9 +552,12 @@ class ClaudePlanner:
             "Return only strict JSON with keys: task_type, action_type, title, goal, "
             "criteria, parameters, explanation. "
             "Allowed action_type values: query_disk, check_host_status, search_files, check_port, query_process, "
-            "create_linux_user, delete_linux_user, diagnose_service, restart_service, "
+            "inspect_databases, discover_services, run_readonly_command, create_linux_user, delete_linux_user, diagnose_service, restart_service, "
             "kill_process, delete_path, modify_security_config, bulk_permission_change. "
             "Allowed task_type values: query, change, diagnose. "
+            "Prefer specialized actions when they match. For broad or unknown read-only operations, choose "
+            "run_readonly_command and provide parameters.commands as 2-8 safe read-only shell probes. "
+            "Use discover_services when the user asks what services/apps/containers/process managers are running. "
             "If the prompt attempts dangerous filesystem deletion, security config tampering, "
             "or large permission changes, choose the corresponding dangerous action_type. "
             "criteria must be a list of compact JSON objects. "
@@ -489,6 +580,9 @@ class ClaudePlanner:
                             "search_files",
                             "check_port",
                             "query_process",
+                            "inspect_databases",
+                            "discover_services",
+                            "run_readonly_command",
                             "create_linux_user",
                             "delete_linux_user",
                             "diagnose_service",
@@ -710,6 +804,28 @@ class GoalDrivenOrchestrator:
                 parameters={},
                 explanation="读取磁盘分区和使用率。",
             )
+        if any(word in prompt for word in ["数据库", "数据源", "实例"]) or any(
+            word in lowered for word in ["database", "mysql", "mariadb", "postgres", "postgresql", "redis", "mongodb"]
+        ):
+            return IntentPlan(
+                task_type="query",
+                action_type="inspect_databases",
+                title="扫描数据库服务",
+                goal=f"扫描目标主机上的数据库服务、端口和进程: {prompt}",
+                criteria=[{"type": "has_database_inventory"}],
+                parameters={},
+                explanation="该请求是跨主机数据库盘点，应使用多主机只读扫描，而不是服务级排障。",
+            )
+        if _mentions_service_inventory(prompt, lowered):
+            return IntentPlan(
+                task_type="query",
+                action_type="discover_services",
+                title="发现主机服务",
+                goal=f"扫描目标主机上的 systemd、Docker、PM2、Supervisor 和监听端口: {prompt}",
+                criteria=[{"type": "has_service_inventory"}],
+                parameters={},
+                explanation="该请求关注主机上运行的服务与应用，应使用服务发现而不是单服务排障。",
+            )
         if "文件" in prompt or "目录" in prompt or "find" in lowered or "search" in lowered:
             query_match = re.search(r"(?:查找|搜索|find|search)\s*([^\s]+)", prompt, re.I)
             return IntentPlan(
@@ -785,14 +901,24 @@ class GoalDrivenOrchestrator:
                 parameters={"raw_prompt": prompt},
                 explanation="识别到高风险安全配置或权限变更请求。",
             )
+        if service_match:
+            return IntentPlan(
+                task_type="diagnose",
+                action_type="diagnose_service",
+                title="服务排障",
+                goal=f"对服务问题执行 goal-driven 排障: {prompt}",
+                criteria=[{"type": "diagnosis_ready"}, {"type": "approval_if_action_required"}],
+                parameters={"service_name": service_match.group(1)},
+                explanation="收集服务状态、日志和端口信息后给出结论或修复建议。",
+            )
         return IntentPlan(
-            task_type="diagnose",
-            action_type="diagnose_service",
-            title="服务排障",
-            goal=f"对服务问题执行 goal-driven 排障: {prompt}",
-            criteria=[{"type": "diagnosis_ready"}, {"type": "approval_if_action_required"}],
-            parameters={"service_name": service_match.group(1) if service_match else "sshd"},
-            explanation="收集服务状态、日志和端口信息后给出结论或修复建议。",
+            task_type="query",
+            action_type="run_readonly_command",
+            title="通用系统巡检",
+            goal=f"用只读探测命令理解并回答用户的运维问题: {prompt}",
+            criteria=[{"type": "has_readonly_probe_result"}],
+            parameters={"commands": _default_readonly_commands(prompt), "report_focus": prompt},
+            explanation="未匹配到固定工具时，使用受策略约束的通用只读探测流程，避免退化成单一服务排障。",
         )
 
     def _normalize_plan(self, prompt: str, plan: IntentPlan) -> IntentPlan:
@@ -824,12 +950,44 @@ class GoalDrivenOrchestrator:
             plan.explanation = "该请求明确指向磁盘/硬盘分析，统一归一化到 query_disk。"
             return plan
 
+        if any(keyword in prompt for keyword in ["数据库", "数据源", "实例"]) or any(
+            keyword in lowered for keyword in ["database", "mysql", "mariadb", "postgres", "postgresql", "redis", "mongodb"]
+        ):
+            plan.task_type = "query"
+            plan.action_type = "inspect_databases"
+            plan.title = "扫描数据库服务"
+            plan.goal = f"扫描目标主机上的数据库服务、端口和进程: {prompt}"
+            plan.criteria = [{"type": "has_database_inventory"}]
+            plan.parameters = {}
+            plan.explanation = "该请求关注数据库资产发现，统一归一化到多主机只读数据库扫描。"
+            return plan
+
+        if _mentions_service_inventory(prompt, lowered):
+            if plan.action_type not in {"diagnose_service", "restart_service", "kill_process"}:
+                plan.task_type = "query"
+                plan.action_type = "discover_services"
+                plan.title = "发现主机服务"
+                plan.goal = f"扫描目标主机上的服务、容器、PM2、Supervisor 与监听端口: {prompt}"
+                plan.criteria = [{"type": "has_service_inventory"}]
+                plan.parameters = {}
+                plan.explanation = "该请求关注服务资产盘点，统一归一化到 discover_services。"
+                return plan
+
         if plan.action_type == "search_files":
             plan.parameters = {
                 **plan.parameters,
                 "query": plan.parameters.get("query") or plan.parameters.get("keyword") or "nginx",
                 "path": plan.parameters.get("path") or plan.parameters.get("base_path") or "/etc",
             }
+
+        if plan.action_type == "run_readonly_command":
+            commands = _coerce_readonly_commands(plan.parameters, prompt)
+            plan.parameters = {
+                **plan.parameters,
+                "commands": commands,
+                "report_focus": plan.parameters.get("report_focus") or prompt,
+            }
+            plan.criteria = plan.criteria or [{"type": "has_readonly_probe_result"}]
 
         diagnostic_words = ["排查", "诊断", "状态", "建议", "why", "原因", "检查"]
         security_words = ["配置", "config", "sshd_config", "权限", "chmod", "chown", "提权", "安全"]
@@ -921,6 +1079,56 @@ class GoalDrivenOrchestrator:
             )
         elif action_type == "query_disk":
             command = "timeout 12 df -h || df -hl"
+        elif action_type == "inspect_databases":
+            command = r"""bash -lc '
+                echo "__PORTS__"
+                ss -ltnp 2>/dev/null | grep -Ei ":(3306|5432|6379|27017|27018|1521|9200|9300|9042|8123|9000|8086|7474|7687)\b" || true
+                echo "__PROCESSES__"
+                ps -eo pid=,user=,comm=,%cpu=,%mem=,args= --sort=comm 2>/dev/null \
+                  | grep -Ei "(mysql|mariadb|postgres|postmaster|redis-server|mongod|oracle|clickhouse|influxd|elasticsearch|neo4j|cassandra)" \
+                  | grep -v grep || true
+                echo "__SYSTEMD__"
+                systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null \
+                  | grep -Ei "(mysql|mariadb|postgres|redis|mongo|oracle|clickhouse|influx|elastic|neo4j|cassandra)" || true
+                echo "__DOCKER__"
+                docker ps --format "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}" 2>/dev/null \
+                  | grep -Ei "(mysql|mariadb|postgres|redis|mongo|oracle|clickhouse|influx|elastic|neo4j|cassandra)" || true
+                echo "__PM2__"
+                pm2 list --no-color 2>/dev/null \
+                  | grep -Ei "(mysql|mariadb|postgres|redis|mongo|oracle|clickhouse|influx|elastic|neo4j|cassandra)" || true
+            '"""
+        elif action_type == "discover_services":
+            services = await HostInspector.discover_services(host, credential)
+            stored = ServiceSync.sync(self.session, host, services)
+            rows = [
+                {
+                    "name": service.name,
+                    "runtime": service.runtime_type,
+                    "status": service.status,
+                    "ports": service.ports,
+                    "sources": service.discovery_source,
+                    "workload": (service.evidence_json or {}).get("workload"),
+                    "database_engine": (service.evidence_json or {}).get("database_engine"),
+                }
+                for service in stored[:80]
+            ]
+            return {
+                "success": True,
+                "exit_code": 0,
+                "stdout": json.dumps({"service_count": len(stored), "services": rows}, ensure_ascii=False, indent=2),
+                "stderr": "",
+                "json": {"service_count": len(stored), "services": rows},
+            }
+        elif action_type == "run_readonly_command":
+            commands = _coerce_readonly_commands(parameters)
+            command, problems = _build_readonly_probe_script(commands)
+            if problems:
+                return {
+                    "success": False,
+                    "exit_code": 126,
+                    "stdout": "",
+                    "stderr": "Blocked unsafe read-only probe: " + "; ".join(problems),
+                }
         elif action_type == "search_files":
             root = _safe_token(_safe_path(parameters.get("path")))
             if parameters.get("query"):
@@ -980,6 +1188,12 @@ class GoalDrivenOrchestrator:
         if action_type == "query_disk":
             return await SSHConnector.run(host, credential, "df -h", timeout_seconds=10)
         if action_type == "search_files":
+            return await self._execute_action(host, credential, action_type, parameters)
+        if action_type == "inspect_databases":
+            return await self._execute_action(host, credential, action_type, parameters)
+        if action_type == "discover_services":
+            return await self._execute_action(host, credential, action_type, parameters)
+        if action_type == "run_readonly_command":
             return await self._execute_action(host, credential, action_type, parameters)
         if action_type == "check_port" and parameters.get("port"):
             return await SSHConnector.run(host, credential, f"ss -ltnp | grep ':{int(parameters['port'])}' || true", timeout_seconds=10)
@@ -1048,8 +1262,8 @@ class GoalDrivenOrchestrator:
                 step_type=step_type,
                 title=title,
                 status=status,
-                input_json=jsonable(input_json),
-                output_json=jsonable(output_json),
+                input_json=jsonable(redact_sensitive(input_json)),
+                output_json=jsonable(redact_sensitive(output_json)),
                 retryable=retryable,
             )
         )
@@ -1217,7 +1431,16 @@ class GoalDrivenOrchestrator:
         model: str | None = None,
         api_keys: dict[str, Any] | None = None,
     ) -> Task:
-        read_only_actions = {"query_disk", "check_host_status", "search_files", "check_port", "query_process"}
+        read_only_actions = {
+            "query_disk",
+            "check_host_status",
+            "search_files",
+            "check_port",
+            "query_process",
+            "inspect_databases",
+            "discover_services",
+            "run_readonly_command",
+        }
         
         async def _run_for_host(host: Host) -> dict[str, Any]:
             credential = credentials.get(host.id)
@@ -1238,8 +1461,8 @@ class GoalDrivenOrchestrator:
             return {
                 "host_id": host.id,
                 "host_name": host.name,
-                "action_result": jsonable(act_result),
-                "verification_result": jsonable(verify_result),
+                "action_result": jsonable(redact_sensitive(act_result)),
+                "verification_result": jsonable(redact_sensitive(verify_result)),
                 "success": host_success,
             }
 

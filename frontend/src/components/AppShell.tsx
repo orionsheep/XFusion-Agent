@@ -10,7 +10,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Layout, Menu, Popover, Select, Tag, Typography, message } from 'antd'
+import { Button, Input, Layout, Menu, Popover, Typography, message } from 'antd'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AgentPanel } from './AgentPanel'
@@ -49,6 +49,34 @@ function getSelectedWorkspaceKey(pathname: string) {
   )
 }
 
+function getGatewayProvider(modelAlias: string) {
+  if (modelAlias.startsWith('GLM')) return 'zhipu'
+  if (modelAlias.startsWith('MiniMax')) return 'minimax'
+  return undefined
+}
+
+function metricPercent(value: unknown) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(0, Math.min(100, Math.round(numeric)))
+}
+
+function formatHostOs(host: any) {
+  const os = [host.os_type, host.os_version].filter(Boolean).join(' ')
+  return os || host.environment || 'unknown'
+}
+
+function getHostMetrics(host: any) {
+  const values = host.monitoring_summary?.values ?? {}
+  const metrics = host.metrics_json ?? {}
+  return {
+    cpu: metricPercent(values.cpu_percent ?? metrics.cpu_percent),
+    memory: metricPercent(values.memory_percent ?? metrics.memory?.percent),
+    disk: metricPercent(values.root_disk_percent ?? metrics.disk?.percent),
+    load: values.load1 ?? metrics.load_average?.[0] ?? 'N/A',
+  }
+}
+
 function AppShellInner() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -64,7 +92,6 @@ function AppShellInner() {
     createNewConversation,
   } = useAgentConsole()
   const [activePopover, setActivePopover] = useState<'model' | 'hosts' | 'workspace' | 'session' | null>(null)
-  const [selectedModel, setSelectedModel] = useState<string>()
   const windowZIndexRef = useRef(160)
 
   const { data: overview } = useQuery({
@@ -90,13 +117,38 @@ function AppShellInner() {
   const updateRuntimeProfileMutation = useMutation({
     mutationFn: ({ modelAlias, provider }: { modelAlias: string; provider?: string }) =>
       updateRuntimeLlmProfile(modelAlias, provider),
-    onSuccess: () => {
+    onMutate: async ({ modelAlias, provider }) => {
+      await queryClient.cancelQueries({ queryKey: ['runtime-llm-profile'] })
+      const previousProfile = queryClient.getQueryData(['runtime-llm-profile'])
+      const nextProvider = provider ?? getGatewayProvider(modelAlias)
+      queryClient.setQueryData(['runtime-llm-profile'], (oldProfile: any) => ({
+        ...oldProfile,
+        active: {
+          ...(oldProfile?.active ?? {}),
+          claude_model: modelAlias,
+          gateway_custom_model_option: modelAlias,
+          gateway_custom_model_option_name: modelAlias,
+          gateway_custom_model_option_description: `${modelAlias} routed through LiteLLM`,
+          gateway_provider: nextProvider ?? oldProfile?.active?.gateway_provider,
+          gateway_model: modelAlias,
+        },
+        available_models: oldProfile?.available_models?.includes(modelAlias)
+          ? oldProfile.available_models
+          : [...(oldProfile?.available_models ?? []), modelAlias],
+      }))
+      return { previousProfile }
+    },
+    onSuccess: (profile) => {
+      queryClient.setQueryData(['runtime-llm-profile'], profile)
       messageApi.success('模型切换已生效')
       queryClient.invalidateQueries({ queryKey: ['runtime-llm-profile'] })
       queryClient.invalidateQueries({ queryKey: ['integrations'] })
       setActivePopover(null)
     },
-    onError: (error: any) => {
+    onError: (error: any, _variables, context) => {
+      if (context?.previousProfile) {
+        queryClient.setQueryData(['runtime-llm-profile'], context.previousProfile)
+      }
       messageApi.error(error?.response?.data?.detail ?? '模型切换失败')
     },
   })
@@ -110,17 +162,9 @@ function AppShellInner() {
   const modelLabel = activeModelAlias
     ?? '未配置模型'
   const totalHostCount = overview?.hosts?.length ?? 0
-  const hostOptions = hosts.map((host: any) => ({
-    label: `${host.name} (${host.address})`,
-    value: host.id,
-  }))
-  const hostNameMap = new Map<number, string>(hosts.map((host: any) => [Number(host.id), String(host.name)]))
-
-  useEffect(() => {
-    if (activeModelAlias) {
-      setSelectedModel(activeModelAlias)
-    }
-  }, [activeModelAlias])
+  const onlineHostIds = hosts
+    .filter((host: any) => ['online', 'registered'].includes(String(host.status)))
+    .map((host: any) => host.id)
 
   useEffect(() => {
     const interactiveSelector = 'button, input, textarea, select, option, a, .ant-select, .ant-btn, .ant-tag, .ant-menu, [role="button"]'
@@ -232,70 +276,130 @@ function AppShellInner() {
         <Typography.Text strong>可用模型</Typography.Text>
         <div className="model-picker-grid">
           {(runtimeProfile?.available_models ?? []).map((model: string) => {
-            const active = selectedModel === model
+            const active = activeModelAlias === model
+            const switching = updateRuntimeProfileMutation.isPending
+              && updateRuntimeProfileMutation.variables?.modelAlias === model
             return (
               <button
                 key={model}
                 type="button"
-                className={`model-picker-card${active ? ' is-active' : ''}`}
-                onClick={() => setSelectedModel(model)}
+                className={`model-picker-card${active ? ' is-active' : ''}${switching ? ' is-switching' : ''}`}
+                disabled={active || updateRuntimeProfileMutation.isPending}
+                onClick={() => {
+                  const provider = getGatewayProvider(model)
+                  updateRuntimeProfileMutation.mutate({ modelAlias: model, provider })
+                }}
               >
                 <strong>{model}</strong>
-                <span>{model.startsWith('GLM') ? '智谱 Gateway' : 'MiniMax Gateway'}</span>
+                <span>
+                  {switching
+                    ? '切换中...'
+                    : active
+                      ? '当前运行'
+                      : model.startsWith('GLM') ? '智谱 Gateway' : 'MiniMax Gateway'}
+                </span>
               </button>
             )
           })}
         </div>
       </div>
-      <Button
-        type="primary"
-        disabled={!selectedModel || selectedModel === activeModelAlias}
-        loading={updateRuntimeProfileMutation.isPending}
-        onClick={() => {
-          if (!selectedModel) return
-          const provider = selectedModel.startsWith('GLM') ? 'zhipu' : 'minimax'
-          updateRuntimeProfileMutation.mutate({ modelAlias: selectedModel, provider })
-        }}
-      >
-        应用模型
-      </Button>
+      <Typography.Text type="secondary" className="control-popover-card__hint">
+        点击模型卡片后立即切换，顶部按钮、Agent 输入区和新任务会同步使用新模型。
+      </Typography.Text>
     </div>
   )
 
   const hostsCard = (
-    <div className="control-popover-card control-popover-card--wide">
+    <div className="control-popover-card control-popover-card--hosts">
       <div className="control-popover-card__header">
         <Typography.Text className="page-kicker">TARGET HOSTS</Typography.Text>
         <Typography.Title level={5} style={{ margin: '4px 0 0' }}>目标主机</Typography.Title>
         <Typography.Text type="secondary">定义当前会话默认操作哪些远程服务器，Agent 会自动把这些主机加入上下文。</Typography.Text>
       </div>
-      <div className="control-popover-card__section">
-        <Typography.Text strong>当前目标</Typography.Text>
-        <div className="host-pill-row">
-          {selectedHosts.length ? selectedHosts.map((hostId) => (
-            <Tag key={hostId} color="green">{hostNameMap.get(hostId) ?? `host-${hostId}`}</Tag>
-          )) : <Typography.Text type="secondary">当前还没有选中主机</Typography.Text>}
+      <div className="host-target-summary">
+        <div>
+          <strong>{selectedHosts.length}</strong>
+          <span>已选主机</span>
+        </div>
+        <div>
+          <strong>{onlineHostIds.length}</strong>
+          <span>在线主机</span>
+        </div>
+        <div>
+          <strong>{hosts.length}</strong>
+          <span>纳管总数</span>
         </div>
       </div>
       <div className="control-popover-card__section">
-        <Typography.Text strong>编辑目标主机</Typography.Text>
-        <Select
-          mode="multiple"
-          allowClear
-          value={selectedHosts}
-          options={hostOptions}
-          onChange={(values) => {
-            setSelectedHosts(values)
-            setRoutePinnedHostId(null)
-          }}
-          maxTagCount="responsive"
-          placeholder="选择当前会话的远程服务器"
-          showSearch
-        />
+        <div className="host-target-section-title">
+          <Typography.Text strong>选择本轮 Agent 目标</Typography.Text>
+          <Typography.Text type="secondary">点击卡片即可加入或移除。</Typography.Text>
+        </div>
+        <div className="host-target-grid">
+          {hosts.map((host: any) => {
+            const selected = selectedHosts.includes(host.id)
+            const metrics = getHostMetrics(host)
+            const toggleHost = () => {
+              setRoutePinnedHostId(null)
+              setSelectedHosts(
+                selected
+                  ? selectedHosts.filter((hostId) => hostId !== host.id)
+                  : [...selectedHosts, host.id],
+              )
+            }
+            return (
+              <button
+                key={host.id}
+                type="button"
+                className={`host-target-card${selected ? ' is-selected' : ''}`}
+                onClick={toggleHost}
+              >
+                <span className="host-target-card__topline">
+                  <strong>{host.name}</strong>
+                  <span className={`host-target-card__status is-${host.status}`}>{host.status}</span>
+                </span>
+                <span className="host-target-card__meta">
+                  {host.address} · {formatHostOs(host)}
+                </span>
+                <span className="host-target-card__metrics">
+                  <span>
+                    CPU
+                    <i><b style={{ width: `${metrics.cpu ?? 0}%` }} /></i>
+                    <em>{metrics.cpu === null ? 'N/A' : `${metrics.cpu}%`}</em>
+                  </span>
+                  <span>
+                    MEM
+                    <i><b style={{ width: `${metrics.memory ?? 0}%` }} /></i>
+                    <em>{metrics.memory === null ? 'N/A' : `${metrics.memory}%`}</em>
+                  </span>
+                  <span>
+                    DISK
+                    <i><b style={{ width: `${metrics.disk ?? 0}%` }} /></i>
+                    <em>{metrics.disk === null ? 'N/A' : `${metrics.disk}%`}</em>
+                  </span>
+                </span>
+                <span className="host-target-card__footer">
+                  <span>Load {String(metrics.load)}</span>
+                  <span>{selected ? '已加入上下文' : '点击加入'}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
       <div className="control-popover-card__actions">
-        <Button onClick={() => setSelectedHosts(hosts.map((host: any) => host.id))}>选中全部</Button>
-        <Button onClick={() => setSelectedHosts([])}>清空</Button>
+        <Button onClick={() => {
+          setRoutePinnedHostId(null)
+          setSelectedHosts(onlineHostIds.length ? onlineHostIds : hosts.map((host: any) => host.id))
+        }}>选择在线</Button>
+        <Button onClick={() => {
+          setRoutePinnedHostId(null)
+          setSelectedHosts(hosts.map((host: any) => host.id))
+        }}>全选</Button>
+        <Button onClick={() => {
+          setRoutePinnedHostId(null)
+          setSelectedHosts([])
+        }}>清空</Button>
         <Button
           type="primary"
           onClick={() => {

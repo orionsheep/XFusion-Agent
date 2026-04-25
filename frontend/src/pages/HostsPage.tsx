@@ -1,4 +1,14 @@
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import {
+  ApiOutlined,
+  CloudServerOutlined,
+  DeploymentUnitOutlined,
+  KeyOutlined,
+  LockOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  SearchOutlined,
+} from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
@@ -7,6 +17,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Radio,
   Select,
   Space,
   Table,
@@ -18,6 +29,32 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
 import { createHost, discoverHost, fetchHosts, profileHost } from '../services/api'
+
+const connectionModeOptions = [
+  {
+    value: 'ssh',
+    label: 'SSH',
+    subtitle: '远程命令通道',
+    description: '适合快速接入已有服务器，不需要安装节点 Agent。',
+    icon: <KeyOutlined />,
+  },
+  {
+    value: 'agent',
+    label: 'Node Agent',
+    subtitle: '节点本地采集',
+    description: '适合长期监控、低延迟采样和本地任务执行。',
+    icon: <DeploymentUnitOutlined />,
+  },
+  {
+    value: 'hybrid',
+    label: 'Hybrid',
+    subtitle: 'Agent 优先，SSH 兜底',
+    description: '生产推荐模式，兼顾实时采集、远程控制和故障兜底。',
+    icon: <CloudServerOutlined />,
+  },
+]
+
+const modeLabelMap = Object.fromEntries(connectionModeOptions.map((item) => [item.value, item.label]))
 
 export function HostsPage() {
   const navigate = useNavigate()
@@ -161,7 +198,7 @@ export function HostsPage() {
               支持 SSH / Node Agent / Hybrid 三种接入形态。
             </p>
           </div>
-          <Button type="primary" onClick={() => setOpen(true)}>
+          <Button type="primary" className="host-add-button" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
             新增主机
           </Button>
         </div>
@@ -212,46 +249,139 @@ export function HostsPage() {
       <Modal
         open={open}
         onCancel={() => setOpen(false)}
-        title="接入主机"
-        onOk={() => form.submit()}
+        title={null}
+        footer={null}
+        width={900}
+        className="host-onboarding-modal"
         confirmLoading={createMutation.isPending}
       >
+        <div className="host-onboarding__hero">
+          <span className="host-onboarding__hero-icon"><CloudServerOutlined /></span>
+          <div>
+            <span className="host-onboarding__eyebrow">HOST ONBOARDING</span>
+            <h2>接入目标主机</h2>
+            <p>把远程服务器加入 XFusion Agent，后续可用于资源监控、服务发现、数据库盘点和 AI 运维任务。</p>
+          </div>
+          <span className="host-onboarding__mode-pill">
+            {modeLabelMap[connectionMode || 'hybrid'] ?? 'Hybrid'}
+          </span>
+        </div>
         <Form
           layout="vertical"
           form={form}
+          className="host-onboarding-form"
           onFinish={(values) => createMutation.mutate(values)}
           initialValues={{ connection_mode: 'hybrid', auth_type: 'key', ssh_port: 22, username: 'root' }}
         >
-          <Form.Item name="name" label="主机名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="address" label="IP / 域名" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="environment" label="环境">
-            <Select options={[{ value: 'production' }, { value: 'staging' }, { value: 'dev' }]} />
-          </Form.Item>
-          <Form.Item name="connection_mode" label="连接模式" rules={[{ required: true }]}>
-            <Select options={[{ value: 'ssh' }, { value: 'agent' }, { value: 'hybrid' }]} />
-          </Form.Item>
+          <section className="host-onboarding__section">
+            <div className="host-onboarding__section-head">
+              <span>01</span>
+              <div>
+                <h3>基础信息</h3>
+                <p>先定义主机身份，名称建议使用业务语义，例如 `prod-api-01`。</p>
+              </div>
+            </div>
+            <div className="host-onboarding__grid host-onboarding__grid--2">
+              <Form.Item name="name" label="主机名称" rules={[{ required: true, message: '请输入主机名称' }]}>
+                <Input placeholder="prod-api-01" />
+              </Form.Item>
+              <Form.Item name="address" label="IP / 域名" rules={[{ required: true, message: '请输入 IP 或域名' }]}>
+                <Input placeholder="192.168.1.10 或 example.internal" />
+              </Form.Item>
+              <Form.Item name="environment" label="环境">
+                <Select
+                  options={[
+                    { value: 'production', label: 'Production' },
+                    { value: 'staging', label: 'Staging' },
+                    { value: 'dev', label: 'Development' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="risk_level" label="默认风险级别">
+                <Select
+                  options={[
+                    { value: 'low', label: 'Low' },
+                    { value: 'medium', label: 'Medium' },
+                    { value: 'high', label: 'High' },
+                  ]}
+                />
+              </Form.Item>
+            </div>
+            <Form.Item name="labels" label="标签">
+              <Select
+                mode="tags"
+                placeholder="例如：database、web、gpu、prod"
+                tokenSeparators={[',', ' ']}
+              />
+            </Form.Item>
+          </section>
+
+          <section className="host-onboarding__section">
+            <div className="host-onboarding__section-head">
+              <span>02</span>
+              <div>
+                <h3>接入模式</h3>
+                <p>Hybrid 更适合生产环境；如果暂时没有节点 Agent，可以先用 SSH 接入。</p>
+              </div>
+            </div>
+            <Form.Item name="connection_mode" rules={[{ required: true }]}>
+              <Radio.Group className="host-mode-grid">
+                {connectionModeOptions.map((option) => (
+                  <Radio.Button key={option.value} value={option.value} className="host-mode-card">
+                    <span className="host-mode-card__icon">{option.icon}</span>
+                    <span className="host-mode-card__body">
+                      <strong>{option.label}</strong>
+                      <small>{option.subtitle}</small>
+                      <em>{option.description}</em>
+                    </span>
+                  </Radio.Button>
+                ))}
+              </Radio.Group>
+            </Form.Item>
+          </section>
+
           {needsSsh ? (
-            <>
+            <section className="host-onboarding__section host-onboarding__section--secure">
+              <div className="host-onboarding__section-head">
+                <span>03</span>
+                <div>
+                  <h3>SSH 认证</h3>
+                  <p>凭据只写入本地运行数据库并会脱敏进入审计日志，不会被提交到 GitHub。</p>
+                </div>
+              </div>
               <Form.Item name="auth_type" label="认证方式" rules={[{ required: true }]}>
-                <Select options={[{ value: 'key' }, { value: 'password' }]} />
+                <Radio.Group className="host-auth-grid">
+                  <Radio.Button value="key" className="host-auth-card">
+                    <KeyOutlined />
+                    <span>
+                      <strong>SSH 私钥</strong>
+                      <small>推荐方式</small>
+                    </span>
+                  </Radio.Button>
+                  <Radio.Button value="password" className="host-auth-card">
+                    <LockOutlined />
+                    <span>
+                      <strong>SSH 密码</strong>
+                      <small>临时接入</small>
+                    </span>
+                  </Radio.Button>
+                </Radio.Group>
               </Form.Item>
-              <Form.Item name="username" label="SSH 用户名" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="ssh_port" label="SSH 端口" rules={[{ required: true }]}>
-                <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-              </Form.Item>
+              <div className="host-onboarding__grid host-onboarding__grid--2">
+                <Form.Item name="username" label="SSH 用户名" rules={[{ required: true, message: '请输入 SSH 用户名' }]}>
+                  <Input placeholder="root" />
+                </Form.Item>
+                <Form.Item name="ssh_port" label="SSH 端口" rules={[{ required: true, message: '请输入 SSH 端口' }]}>
+                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                </Form.Item>
+              </div>
               {authType === 'key' ? (
                 <Form.Item
                   name="ssh_private_key"
                   label="SSH 私钥"
                   rules={[{ required: true, message: 'SSH key 模式下必须提供私钥' }]}
                 >
-                  <Input.TextArea rows={4} />
+                  <Input.TextArea rows={5} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
                 </Form.Item>
               ) : null}
               {authType === 'password' ? (
@@ -260,20 +390,38 @@ export function HostsPage() {
                   label="SSH 密码"
                   rules={[{ required: true, message: 'SSH password 模式下必须提供密码' }]}
                 >
-                  <Input.Password />
+                  <Input.Password placeholder="请输入 SSH 密码" />
                 </Form.Item>
               ) : null}
-            </>
+            </section>
           ) : null}
           {needsAgent ? (
-            <Form.Item
-              name="agent_url"
-              label="Agent URL"
-              rules={[{ required: true, message: 'Agent / Hybrid 模式下必须提供 Agent URL' }]}
-            >
-              <Input placeholder="http://host:9001" />
-            </Form.Item>
+            <section className="host-onboarding__section">
+              <div className="host-onboarding__section-head">
+                <span>{needsSsh ? '04' : '03'}</span>
+                <div>
+                  <h3>Node Agent 通道</h3>
+                  <p>用于节点本地执行、系统指标采集和后续长任务协同。</p>
+                </div>
+              </div>
+              <Form.Item
+                name="agent_url"
+                label="Agent URL"
+                rules={[{ required: true, message: 'Agent / Hybrid 模式下必须提供 Agent URL' }]}
+              >
+                <Input prefix={<ApiOutlined />} placeholder="http://host:9001" />
+              </Form.Item>
+            </section>
           ) : null}
+          <div className="host-onboarding__footer">
+            <span><SafetyCertificateOutlined /> 接入后会自动触发主机画像、服务发现和风险审计。</span>
+            <Space>
+              <Button onClick={() => setOpen(false)}>取消</Button>
+              <Button type="primary" loading={createMutation.isPending} onClick={() => form.submit()}>
+                接入主机
+              </Button>
+            </Space>
+          </div>
         </Form>
       </Modal>
     </div>

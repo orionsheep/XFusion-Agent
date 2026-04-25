@@ -43,6 +43,37 @@ def jsonable(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
+SENSITIVE_KEY_RE = re.compile(
+    r"(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|database[_-]?url|auth[_-]?secret|nextauth[_-]?secret)",
+    re.I,
+)
+CONNECTION_URL_RE = re.compile(
+    r"(?i)\b(postgresql|postgres|mysql|mariadb|mongodb(?:\+srv)?|redis)://[^\s'\"<>\\]+"
+)
+SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|DATABASE_URL|AUTH_SECRET|NEXTAUTH_SECRET)[A-Z0-9_]*)"
+    r"([\"']?\s*[:=]\s*[\"']?)([^\"'\s,}]+)"
+)
+SECRET_TOKEN_RE = re.compile(r"\b(?:sk|sk-cp|sk-cf|sk-sq)[A-Za-z0-9._-]{16,}\b", re.I)
+
+
+def redact_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            redacted[key_text] = "[REDACTED]" if SENSITIVE_KEY_RE.search(key_text) else redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    if isinstance(value, str):
+        text = CONNECTION_URL_RE.sub(lambda match: f"{match.group(1)}://[REDACTED]", value)
+        text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", text)
+        text = SECRET_TOKEN_RE.sub("[REDACTED]", text)
+        return text
+    return value
+
+
 def serialize_model(instance: Any) -> dict[str, Any]:
     if instance is None:
         return {}
@@ -163,7 +194,7 @@ def upsert_audit(
         task_id=task_id,
         host_id=host_id,
         event_type=event_type,
-        payload_json=jsonable(payload or {}),
+        payload_json=jsonable(redact_sensitive(payload or {})),
     )
     session.add(audit)
     session.commit()
@@ -287,11 +318,71 @@ class AgentConnector:
             return response.json()
 
 
+READONLY_COMMAND_BLOCK_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(^|[;&|]\s*)sudo\b", "sudo is not allowed in read-only command mode"),
+    (r"(^|[;&|]\s*)su\b", "su is not allowed in read-only command mode"),
+    (r"(^|[;&|]\s*)(rm|mv|cp|touch|mkdir|rmdir|ln)\b", "filesystem mutation commands are blocked"),
+    (r"(^|[;&|]\s*)(chmod|chown|chgrp|setfacl|passwd|useradd|userdel|usermod|groupadd|groupdel)\b", "identity or permission mutation commands are blocked"),
+    (r"(^|[;&|]\s*)(kill|pkill|killall|reboot|shutdown|poweroff|halt)\b", "process or host control commands are blocked"),
+    (r"(^|[;&|]\s*)(curl|wget)\b.*\|\s*(sh|bash)", "download-and-execute patterns are blocked"),
+    (r"\|\s*(sh|bash|python|perl|ruby)\b", "piping into interpreters is blocked"),
+    (r"(^|[;&|]\s*)(dd|mkfs|fsck|mount|umount|truncate)\b", "block device or mount mutation commands are blocked"),
+    (r"(^|[;&|]\s*)tee\b", "tee can write files and is blocked"),
+    (r"(^|[;&|]\s*)sed\s+.*\s-i(\s|$)", "in-place file editing is blocked"),
+    (r"(^|[;&|]\s*)systemctl\s+(start|stop|restart|reload|enable|disable|mask|unmask|edit|set-property)\b", "state-changing systemctl commands are blocked"),
+    (r"(^|[;&|]\s*)service\s+\S+\s+(start|stop|restart|reload)\b", "state-changing service commands are blocked"),
+    (r"(^|[;&|]\s*)docker\s+(run|exec|rm|rmi|start|stop|restart|kill|compose\s+up|compose\s+down)\b", "state-changing docker commands are blocked"),
+    (r"(^|[;&|]\s*)pm2\s+(start|stop|restart|delete|kill|save|startup|reload)\b", "state-changing pm2 commands are blocked"),
+    (r"(^|[;&|]\s*)supervisorctl\s+(start|stop|restart|reload|update)\b", "state-changing supervisor commands are blocked"),
+    (r"(^|[;&|]\s*)kubectl\s+(apply|create|delete|patch|replace|scale|exec|rollout\s+restart)\b", "state-changing kubectl commands are blocked"),
+    (r"(^|[^<])>>?\s*[^&]", "shell output redirection is blocked"),
+)
+
+
+def validate_readonly_commands(commands: list[str] | tuple[str, ...] | None) -> tuple[bool, list[str]]:
+    problems: list[str] = []
+    for index, raw_command in enumerate(commands or [], start=1):
+        command = str(raw_command or "").strip()
+        if not command:
+            problems.append(f"command {index} is empty")
+            continue
+        if len(command) > 420:
+            problems.append(f"command {index} is too long")
+            continue
+        lowered = command.lower()
+        lowered_for_patterns = re.sub(r"(^|\s)[0-9]?>/dev/null\b", " ", lowered)
+        lowered_for_patterns = re.sub(r"(^|\s)[0-9]?>>/dev/null\b", " ", lowered_for_patterns)
+        for pattern, reason in READONLY_COMMAND_BLOCK_PATTERNS:
+            if re.search(pattern, lowered_for_patterns):
+                problems.append(f"command {index}: {reason}")
+                break
+    return not problems, problems
+
+
 class PolicyEngine:
     @staticmethod
     def evaluate(action_type: str, parameters: dict[str, Any], host: Host) -> dict[str, Any]:
         blast_radius = {"hosts": 1, "services": 1, "paths": [parameters.get("path")] if parameters.get("path") else []}
-        if action_type in {"query_disk", "check_host_status", "search_files", "check_port", "query_process", "discover_services", "diagnose_service"}:
+        if action_type == "run_readonly_command":
+            raw_commands = parameters.get("commands")
+            commands = raw_commands if isinstance(raw_commands, list) else [str(raw_commands or "")]
+            safe, problems = validate_readonly_commands(commands)
+            if not safe:
+                return {
+                    "allowed": False,
+                    "risk_level": "L4",
+                    "approval_required": False,
+                    "reason": "Blocked by safety policy: " + "; ".join(problems[:3]),
+                    "blast_radius": blast_radius,
+                }
+            return {
+                "allowed": True,
+                "risk_level": "L0",
+                "approval_required": False,
+                "reason": "validated read-only shell probe",
+                "blast_radius": blast_radius,
+            }
+        if action_type in {"query_disk", "check_host_status", "search_files", "check_port", "query_process", "inspect_databases", "discover_services", "diagnose_service"}:
             return {
                 "allowed": True,
                 "risk_level": "L0" if action_type != "diagnose_service" else "L1",
@@ -1148,4 +1239,3 @@ class DashboardService:
             "tasks": [serialize_model(task) for task in tasks],
             "approvals": [serialize_model(approval) for approval in approvals],
         }
-
