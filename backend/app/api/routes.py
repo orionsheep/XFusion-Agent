@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from ..core.database import get_session
@@ -34,6 +34,7 @@ from ..services.platform import (
     ServiceSync,
     now,
     serialize_model,
+    settings,
     upsert_audit,
 )
 from ..services.integrations import CapabilityCatalog
@@ -49,9 +50,25 @@ from ..services.security import (
     require_roles,
 )
 from ..services.llm_router import registry
+from ..services.voice import VoiceTranscriptionError, transcribe_with_siliconflow
 
 
 router = APIRouter()
+
+
+def get_user_provider_key(session: Session, user_id: int, provider_name: str) -> str | None:
+    row = session.exec(
+        select(ProviderKey).where(
+            ProviderKey.user_id == user_id,
+            ProviderKey.provider_name == provider_name,
+        )
+    ).first()
+    if not row:
+        return None
+    try:
+        return decrypt_secret(row.encrypted_key)
+    except Exception:
+        return None
 
 
 def serialize_host(host: Host) -> dict:
@@ -169,6 +186,31 @@ def update_runtime_llm_profile(
         "available_models": ClaudeGatewayRuntime.available_models(),
         "gateway": ClaudeGatewayRuntime.healthcheck(),
     }
+
+
+@router.post("/voice/transcriptions")
+async def transcribe_voice(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_session)],
+    file: UploadFile = File(...),
+    model: str | None = Form(default=None),
+) -> dict:
+    api_key = get_user_provider_key(session, current_user.id, "siliconflow") or settings.siliconflow_api_key
+    if not api_key:
+        raise HTTPException(status_code=400, detail="SiliconFlow API Key 未配置，请先在系统设置中配置 siliconflow provider key")
+    audio_bytes = await file.read()
+    selected_model = (model or settings.siliconflow_asr_model).strip()
+    try:
+        result = await transcribe_with_siliconflow(
+            api_key=api_key,
+            audio_bytes=audio_bytes,
+            filename=file.filename or "voice.webm",
+            content_type=file.content_type or "audio/webm",
+            model=selected_model,
+        )
+    except VoiceTranscriptionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"text": result.text, "provider": "siliconflow", "model": result.model}
 
 
 @router.get("/users")

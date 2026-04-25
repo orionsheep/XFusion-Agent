@@ -291,7 +291,7 @@ class PolicyEngine:
     @staticmethod
     def evaluate(action_type: str, parameters: dict[str, Any], host: Host) -> dict[str, Any]:
         blast_radius = {"hosts": 1, "services": 1, "paths": [parameters.get("path")] if parameters.get("path") else []}
-        if action_type in {"query_disk", "search_files", "check_port", "query_process", "discover_services", "diagnose_service"}:
+        if action_type in {"query_disk", "check_host_status", "search_files", "check_port", "query_process", "discover_services", "diagnose_service"}:
             return {
                 "allowed": True,
                 "risk_level": "L0" if action_type != "diagnose_service" else "L1",
@@ -1148,5 +1148,4 @@ class DashboardService:
             "tasks": [serialize_model(task) for task in tasks],
             "approvals": [serialize_model(approval) for approval in approvals],
         }
-
 

@@ -23,6 +23,7 @@ import {
   fetchHosts,
   fetchRuntimeLlmProfile,
   fetchTasks,
+  transcribeVoice,
 } from '../services/api'
 
 const quickPrompts = [
@@ -161,7 +162,11 @@ export function AgentPanel() {
   const [pendingPhaseIndex, setPendingPhaseIndex] = useState(0)
   const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null)
   const [streamingSummary, setStreamingSummary] = useState('')
+  const [transcribing, setTranscribing] = useState(false)
   const conversationRef = useRef<HTMLDivElement | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
   const streamedTaskRef = useRef<number | null>(null)
   const queryClient = useQueryClient()
   const {
@@ -292,29 +297,74 @@ export function AgentPanel() {
   }, [hostNameMap, latestTaskId, latestTaskReport, pendingDraft])
 
   const startVoiceInput = () => {
-    const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!Recognition) {
-      messageApi.warning('当前浏览器不支持语音识别，可改用 Chrome。')
+    if (listening) {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
       return
     }
-    const recognition = new Recognition()
-    recognition.lang = 'zh-CN'
-    recognition.interimResults = false
-    recognition.continuous = false
-    recognition.onstart = () => setListening(true)
-    recognition.onend = () => setListening(false)
-    recognition.onerror = () => {
-      setListening(false)
-      messageApi.error('语音识别失败，请重试')
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      messageApi.warning('当前浏览器不支持录音上传，请使用 Chrome 或 Edge。')
+      return
     }
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript ?? ''
-      if (transcript) {
-        setPrompt(transcript)
-      }
-    }
-    recognition.start()
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        audioChunksRef.current = []
+        mediaStreamRef.current = stream
+        const recorder = new MediaRecorder(stream)
+        mediaRecorderRef.current = recorder
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data)
+          }
+        }
+        recorder.onerror = () => {
+          setListening(false)
+          setTranscribing(false)
+          messageApi.error('录音失败，请重试')
+          stream.getTracks().forEach((track) => track.stop())
+        }
+        recorder.onstop = async () => {
+          setListening(false)
+          setTranscribing(true)
+          stream.getTracks().forEach((track) => track.stop())
+          try {
+            const mimeType = recorder.mimeType || 'audio/webm'
+            const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
+            const result = await transcribeVoice(audioBlob)
+            setPrompt(prompt.trim() ? `${prompt.trim()} ${result.text}` : result.text)
+            messageApi.success(`语音已由 ${result.model} 转写完成`)
+          } catch (error: any) {
+            messageApi.error(error?.response?.data?.detail ?? '语音转写失败')
+          } finally {
+            setTranscribing(false)
+            mediaRecorderRef.current = null
+            mediaStreamRef.current = null
+            audioChunksRef.current = []
+          }
+        }
+        recorder.start()
+        setListening(true)
+      })
+      .catch(() => {
+        messageApi.error('无法访问麦克风，请检查浏览器授权')
+      })
   }
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+    }
+  }, [])
+
+  const voiceButtonLabel = (() => {
+    if (transcribing) return '转写中'
+    if (listening) return '停止录音'
+    return '语音输入'
+  })()
 
   const runPrompt = () => {
     if (!prompt.trim()) {
@@ -570,9 +620,13 @@ export function AgentPanel() {
         <div className="agent-stage__composer-actions">
           <div className="agent-stage__composer-left">
             <Button className="agent-stage__tool-button" shape="circle" icon={<PlusOutlined />} aria-label="添加上下文" />
-            <Button className="agent-stage__agent-pill">Agent</Button>
-            <Button className="agent-stage__voice-button" icon={<AudioOutlined />} onClick={startVoiceInput} loading={listening}>
-              {listening ? '正在听写' : '语音输入'}
+            <Button
+              className="agent-stage__voice-button"
+              icon={<AudioOutlined />}
+              onClick={startVoiceInput}
+              loading={transcribing}
+            >
+              {voiceButtonLabel}
             </Button>
           </div>
           <div className="agent-stage__composer-right">

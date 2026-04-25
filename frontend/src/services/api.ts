@@ -152,6 +152,15 @@ export async function executeTask(payload: Record<string, unknown>) {
   return data
 }
 
+export async function transcribeVoice(file: Blob, model = 'FunAudioLLM/SenseVoiceSmall') {
+  const formData = new FormData()
+  const extension = file.type.includes('mp4') ? 'mp4' : file.type.includes('wav') ? 'wav' : 'webm'
+  formData.append('file', file, `voice-input.${extension}`)
+  formData.append('model', model)
+  const { data } = await api.post('/voice/transcriptions', formData)
+  return data as { text: string; provider: string; model: string }
+}
+
 export async function fetchApprovals() {
   const { data } = await api.get('/approvals')
   return data

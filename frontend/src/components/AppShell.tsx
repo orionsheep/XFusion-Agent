@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Input, Layout, Menu, Popover, Select, Tag, Typography, message } from 'antd'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AgentPanel } from './AgentPanel'
 import { AgentConsoleProvider, useAgentConsole } from './AgentConsoleContext'
@@ -20,6 +20,7 @@ import {
   fetchHosts,
   fetchOverview,
   fetchRuntimeLlmProfile,
+  fetchTasks,
   updateRuntimeLlmProfile,
 } from '../services/api'
 
@@ -58,6 +59,8 @@ function AppShellInner() {
     setSelectedHosts,
     setRoutePinnedHostId,
     sessionId,
+    setSessionId,
+    setPrompt,
     createNewConversation,
   } = useAgentConsole()
   const [activePopover, setActivePopover] = useState<'model' | 'hosts' | 'workspace' | 'session' | null>(null)
@@ -77,6 +80,11 @@ function AppShellInner() {
     queryKey: ['runtime-llm-profile'],
     queryFn: fetchRuntimeLlmProfile,
     refetchInterval: 30000,
+  })
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: fetchTasks,
+    refetchInterval: 5000,
   })
 
   const updateRuntimeProfileMutation = useMutation({
@@ -116,7 +124,7 @@ function AppShellInner() {
 
   useEffect(() => {
     const interactiveSelector = 'button, input, textarea, select, option, a, .ant-select, .ant-btn, .ant-tag, .ant-menu, [role="button"]'
-    const handleSelector = '.window-drag-handle, .ant-card-head, .workspace-overlay__content-header, .workspace-overlay__rail-header, .agent-stage__hero'
+    const handleSelector = '.window-drag-handle, .ant-card-head, .workspace-overlay__dragbar, .workspace-overlay__content-header, .workspace-overlay__rail-header, .agent-stage__hero'
     let active:
       | {
           element: HTMLElement
@@ -174,6 +182,37 @@ function AppShellInner() {
       window.removeEventListener('mouseup', stopDrag)
     }
   }, [])
+
+  const conversationHistory = useMemo(() => {
+    const grouped = new Map<string, {
+      sessionId: string
+      title: string
+      prompt: string
+      updatedAt: string
+      count: number
+      status: string
+    }>()
+    tasks.forEach((task: any) => {
+      const taskSessionId = String(task.session_id || 'default')
+      const updatedAt = String(task.updated_at || task.created_at || '')
+      const existing = grouped.get(taskSessionId)
+      if (!existing || updatedAt > existing.updatedAt) {
+        grouped.set(taskSessionId, {
+          sessionId: taskSessionId,
+          title: String(task.title || '未命名会话'),
+          prompt: String(task.prompt || ''),
+          updatedAt,
+          count: (existing?.count ?? 0) + 1,
+          status: String(task.status || ''),
+        })
+      } else {
+        existing.count += 1
+      }
+    })
+    return Array.from(grouped.values())
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 28)
+  }, [tasks])
 
   const modelCard = (
     <div className="control-popover-card">
@@ -361,22 +400,31 @@ function AppShellInner() {
             <kbd>⌘</kbd><kbd>K</kbd>
           </button>
 
-          <nav className="kimi-sidebar__nav" aria-label="工作区">
-            {workspaceItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`kimi-sidebar__nav-item${selectedWorkspaceKey === item.key && workspaceOpen ? ' is-active' : ''}`}
-                onClick={() => {
-                  navigate(item.key)
-                  setActivePopover(null)
-                }}
-              >
-                <span className="kimi-sidebar__nav-icon">{item.icon}</span>
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </nav>
+          <section className="kimi-sidebar__history" aria-label="聊天记录">
+            <div className="kimi-sidebar__history-title">聊天记录</div>
+            {conversationHistory.length ? (
+              <div className="kimi-sidebar__history-list">
+                {conversationHistory.map((item) => (
+                  <button
+                    key={item.sessionId}
+                    type="button"
+                    className={`kimi-sidebar__history-item${item.sessionId === sessionId ? ' is-active' : ''}`}
+                    onClick={() => {
+                      setSessionId(item.sessionId)
+                      setPrompt('')
+                      navigate('/')
+                    }}
+                  >
+                    <span className="kimi-sidebar__history-name">{item.title}</span>
+                    <span className="kimi-sidebar__history-prompt">{item.prompt || item.sessionId}</span>
+                    <span className="kimi-sidebar__history-meta">{item.count} 条 · {item.status || 'unknown'}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="kimi-sidebar__history-empty">暂无会话，发起一个任务后会在这里沉淀记录。</div>
+            )}
+          </section>
         </div>
 
         <div className="kimi-sidebar__middle">
@@ -515,6 +563,11 @@ function AppShellInner() {
               onClick={() => navigate('/')}
             />
             <section className="workspace-overlay__panel window-draggable">
+              <div className="workspace-overlay__dragbar window-drag-handle">
+                <span />
+                <span />
+                <span />
+              </div>
               <aside className="workspace-overlay__rail">
                 <div className="workspace-overlay__rail-header">
                   <Typography.Text type="secondary">Secondary Workspace</Typography.Text>

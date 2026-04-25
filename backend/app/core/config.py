@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     gateway_provider: str = "minimax"
     gateway_model: str = "MiniMax-M2.7"
     gateway_timeout_seconds: int = 45
+    siliconflow_api_key: str | None = None
+    siliconflow_asr_model: str = "FunAudioLLM/SenseVoiceSmall"
     model: str = "anthropic/claude-sonnet-4-6"
     agent_shared_secret: str = "change-me-agent-secret"
     token_expire_minutes: int = 60 * 12

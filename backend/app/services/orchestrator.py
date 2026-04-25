@@ -463,7 +463,7 @@ class ClaudePlanner:
             "You do not have embedded host snapshot data. "
             "Return only strict JSON with keys: task_type, action_type, title, goal, "
             "criteria, parameters, explanation. "
-            "Allowed action_type values: query_disk, search_files, check_port, query_process, "
+            "Allowed action_type values: query_disk, check_host_status, search_files, check_port, query_process, "
             "create_linux_user, delete_linux_user, diagnose_service, restart_service, "
             "kill_process, delete_path, modify_security_config, bulk_permission_change. "
             "Allowed task_type values: query, change, diagnose. "
@@ -485,6 +485,7 @@ class ClaudePlanner:
                         "type": "string",
                         "enum": [
                             "query_disk",
+                            "check_host_status",
                             "search_files",
                             "check_port",
                             "query_process",
@@ -675,6 +676,7 @@ class GoalDrivenOrchestrator:
         port_match = re.search(r"(\d{2,5})\s*(?:端口|port)", prompt)
         previous_parameters = (session_context or {}).get("last_parameters") or {}
         continuation_words = ["继续", "接着", "再", "日志", "继续看", "continue", "follow-up"]
+        status_words = ["连接状态", "在线状态", "主机状态", "服务器状态", "连通性", "是否在线", "健康状态"]
 
         if any(word in prompt for word in continuation_words) and previous_parameters.get("service_name"):
             return IntentPlan(
@@ -685,6 +687,17 @@ class GoalDrivenOrchestrator:
                 criteria=[{"type": "diagnosis_ready"}, {"type": "context_reused"}],
                 parameters={"service_name": previous_parameters.get("service_name")},
                 explanation=f"复用了 session 上下文中的服务名 {previous_parameters.get('service_name')} 继续诊断。",
+            )
+
+        if any(word in prompt for word in status_words) or any(word in lowered for word in ["connectivity", "host status", "online status"]):
+            return IntentPlan(
+                task_type="query",
+                action_type="check_host_status",
+                title="检查主机连接状态",
+                goal=f"检查目标服务器在线状态和基础连通性: {prompt}",
+                criteria=[{"type": "has_host_status"}],
+                parameters={},
+                explanation="该请求关注服务器/主机连接状态，应使用多主机只读状态检查，而不是服务级排障。",
             )
 
         if "磁盘" in prompt or "disk" in lowered:
@@ -786,6 +799,17 @@ class GoalDrivenOrchestrator:
         lowered = prompt.lower()
         service_match = re.search(r"(?:服务|service)\s*[:：]?\s*([a-zA-Z0-9._-]+)", prompt)
         service_name = plan.parameters.get("service_name") or (service_match.group(1) if service_match else None)
+        status_words = ["连接状态", "在线状态", "主机状态", "服务器状态", "连通性", "是否在线", "健康状态"]
+
+        if any(word in prompt for word in status_words) or any(word in lowered for word in ["connectivity", "host status", "online status"]):
+            plan.task_type = "query"
+            plan.action_type = "check_host_status"
+            plan.title = "检查主机连接状态"
+            plan.goal = f"检查目标服务器在线状态和基础连通性: {prompt}"
+            plan.criteria = [{"type": "has_host_status"}]
+            plan.parameters = {}
+            plan.explanation = "该请求关注服务器/主机连接状态，统一归一化到多主机只读状态检查。"
+            return plan
 
         if any(keyword in prompt for keyword in ["磁盘", "硬盘"]) or "disk" in lowered:
             plan.task_type = "query"
@@ -887,6 +911,14 @@ class GoalDrivenOrchestrator:
                 f"journalctl -u {shlex.quote(service_name)} -n 60 --no-pager || true; "
                 "ss -ltnp | tail -n +1 || true"
             )
+        elif action_type == "check_host_status":
+            command = (
+                "printf 'hostname='; hostname; "
+                "printf 'uptime='; uptime; "
+                "printf 'load='; cat /proc/loadavg 2>/dev/null || true; "
+                "printf 'kernel='; uname -srmo; "
+                "printf 'disk_root='; df -h / 2>/dev/null | tail -n 1 || true"
+            )
         elif action_type == "query_disk":
             command = "timeout 12 df -h || df -hl"
         elif action_type == "search_files":
@@ -943,6 +975,8 @@ class GoalDrivenOrchestrator:
                 "stdout": "user absent" if not result.get("success", False) else result.get("stdout", ""),
                 "stderr": result.get("stderr", ""),
             }
+        if action_type == "check_host_status":
+            return await self._execute_action(host, credential, action_type, parameters)
         if action_type == "query_disk":
             return await SSHConnector.run(host, credential, "df -h", timeout_seconds=10)
         if action_type == "search_files":
@@ -1183,7 +1217,7 @@ class GoalDrivenOrchestrator:
         model: str | None = None,
         api_keys: dict[str, Any] | None = None,
     ) -> Task:
-        read_only_actions = {"query_disk", "search_files", "check_port", "query_process"}
+        read_only_actions = {"query_disk", "check_host_status", "search_files", "check_port", "query_process"}
         
         async def _run_for_host(host: Host) -> dict[str, Any]:
             credential = credentials.get(host.id)

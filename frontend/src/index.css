@@ -1819,6 +1819,83 @@ body::before {
   gap: 2px;
 }
 
+.kimi-sidebar__history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  margin-top: 8px;
+}
+
+.kimi-sidebar__history-title {
+  padding: 0 11px;
+  color: #9aa1aa;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kimi-sidebar__history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #d4d8df transparent;
+}
+
+.kimi-sidebar__history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 12px !important;
+  background: transparent;
+  color: #4b5563;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kimi-sidebar__history-item:hover,
+.kimi-sidebar__history-item.is-active {
+  background: #eef0f3;
+}
+
+.kimi-sidebar__history-name,
+.kimi-sidebar__history-prompt,
+.kimi-sidebar__history-meta {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kimi-sidebar__history-name {
+  color: #202124;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kimi-sidebar__history-prompt {
+  color: #69717d;
+  font-size: 12px;
+}
+
+.kimi-sidebar__history-meta,
+.kimi-sidebar__history-empty {
+  color: #9aa1aa;
+  font-size: 11px;
+}
+
+.kimi-sidebar__history-empty {
+  padding: 10px 11px;
+  line-height: 1.5;
+}
+
 .kimi-sidebar__nav-item {
   gap: 10px;
   min-height: 38px;
@@ -2239,6 +2316,31 @@ body::before {
   backdrop-filter: none;
 }
 
+.workspace-overlay__dragbar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 72px;
+  height: 24px;
+  transform: translateX(-50%);
+  border: 1px solid #eceef1;
+  border-radius: 999px !important;
+  background: rgba(247, 248, 250, 0.88);
+  cursor: grab;
+}
+
+.workspace-overlay__dragbar span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #c0c6ce;
+}
+
 .workspace-overlay__rail {
   background: #f7f8fa;
 }
@@ -2276,6 +2378,10 @@ body::before {
   }
 
   .kimi-sidebar__collapse {
+    display: none;
+  }
+
+  .kimi-sidebar__history {
     display: none;
   }
 
