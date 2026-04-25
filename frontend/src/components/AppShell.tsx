@@ -9,21 +9,26 @@ import {
   SafetyCertificateOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Layout, Menu, Popover, Select, Space, Tag, Typography, message } from 'antd'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Avatar, Button, Layout, Menu, Skeleton, Space, Typography } from 'antd'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { AgentPanel } from './AgentPanel'
-import { AgentConsoleProvider, useAgentConsole } from './AgentConsoleContext'
-import {
-  clearStoredToken,
-  fetchHosts,
-  fetchOverview,
-  fetchRuntimeLlmProfile,
-  updateRuntimeLlmProfile,
-} from '../services/api'
+import { clearStoredToken, fetchOverview } from '../services/api'
 
-const { Header, Content } = Layout
+const AgentPanel = lazy(() => import('./AgentPanel').then((module) => ({ default: module.AgentPanel })))
+
+type OverviewHost = {
+  status: string
+  monitoring_summary?: {
+    values?: {
+      cpu_percent?: number
+      memory_percent?: number
+      root_disk_percent?: number
+    }
+  }
+}
+
+const { Header, Sider, Content } = Layout
 
 type WorkspaceItem = {
   key: string
@@ -69,44 +74,23 @@ function AppShellInner() {
     queryFn: fetchOverview,
     refetchInterval: 30000,
   })
-  const { data: hosts = [] } = useQuery({
-    queryKey: ['hosts'],
-    queryFn: fetchHosts,
-  })
-  const { data: runtimeProfile } = useQuery({
-    queryKey: ['runtime-llm-profile'],
-    queryFn: fetchRuntimeLlmProfile,
-    refetchInterval: 30000,
-  })
-
-  const updateRuntimeProfileMutation = useMutation({
-    mutationFn: ({ modelAlias, provider }: { modelAlias: string; provider?: string }) =>
-      updateRuntimeLlmProfile(modelAlias, provider),
-    onSuccess: () => {
-      messageApi.success('模型切换已生效')
-      queryClient.invalidateQueries({ queryKey: ['runtime-llm-profile'] })
-      queryClient.invalidateQueries({ queryKey: ['integrations'] })
-      setActivePopover(null)
-    },
-    onError: (error: any) => {
-      messageApi.error(error?.response?.data?.detail ?? '模型切换失败')
-    },
-  })
-
-  const workspaceOpen = location.pathname !== '/'
-  const selectedWorkspaceKey = getSelectedWorkspaceKey(location.pathname)
-  const selectedWorkspaceLabel = workspaceItems.find((item) => item.key === selectedWorkspaceKey)?.label ?? '总览'
-  const activeModelAlias = runtimeProfile?.active?.gateway_custom_model_option_name
-    ?? runtimeProfile?.active?.gateway_model
-    ?? runtimeProfile?.active?.claude_model
-  const modelLabel = activeModelAlias
-    ?? '未配置模型'
-  const totalHostCount = overview?.hosts?.length ?? 0
-  const hostOptions = hosts.map((host: any) => ({
-    label: `${host.name} (${host.address})`,
-    value: host.id,
-  }))
-  const hostNameMap = new Map<number, string>(hosts.map((host: any) => [Number(host.id), String(host.name)]))
+  const selectedKey =
+    items.find((item) => item.key === '/'
+      ? location.pathname === '/'
+      : location.pathname === item.key || location.pathname.startsWith(`${item.key}/`))?.key ?? '/'
+  const shouldRenderAgentPanel = useMemo(
+    () => !['/settings', '/audit', '/approvals'].some((prefix) => location.pathname.startsWith(prefix)),
+    [location.pathname],
+  )
+  const riskHostCount = ((overview?.hosts ?? []) as OverviewHost[]).filter((host) => {
+    const values = host.monitoring_summary?.values ?? {}
+    return (
+      (host.status !== 'online' && host.status !== 'registered') ||
+      (values.cpu_percent ?? 0) >= 85 ||
+      (values.memory_percent ?? 0) >= 85 ||
+      (values.root_disk_percent ?? 0) >= 80
+    )
+  }).length
 
   useEffect(() => {
     if (activeModelAlias) {
@@ -467,6 +451,13 @@ function AppShellInner() {
                 </div>
               </section>
             </section>
+            {shouldRenderAgentPanel ? (
+              <aside className="control-workbench__agent">
+                <Suspense fallback={<Skeleton active paragraph={{ rows: 8 }} />}>
+                  <AgentPanel />
+                </Suspense>
+              </aside>
+            ) : null}
           </div>
         ) : null}
       </Content>

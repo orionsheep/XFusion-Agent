@@ -16,21 +16,25 @@ import {
   Typography,
   message,
 } from 'antd'
+import { CheckCircleFilled, MinusCircleOutlined } from '@ant-design/icons'
 import { ExpandablePanelCard } from '../components/ExpandablePanelCard'
+import type { ProviderInfo } from '../services/api'
 import {
   API_BASE_URL,
   changePassword,
   collectMonitoringSnapshots,
   createUser,
+  deleteProviderKey,
   deleteUser,
   fetchCurrentUser,
   fetchIntegrations,
   fetchPdfValidation,
-  fetchRuntimeLlmProfile,
+  fetchProviders,
   fetchUsers,
   resetUserPassword,
   updateRuntimeLlmProfile,
   updateUser,
+  upsertProviderKey,
 } from '../services/api'
 
 const roleOptions = [
@@ -72,6 +76,36 @@ export function SettingsPage() {
     queryKey: ['users'],
     queryFn: fetchUsers,
     enabled: Boolean(isAdmin),
+  })
+
+  const { data: providers = [], refetch: refetchProviders } = useQuery<ProviderInfo[]>({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+  })
+
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({})
+
+  const upsertKeyMutation = useMutation({
+    mutationFn: ({ name, key }: { name: string; key: string }) => upsertProviderKey(name, key),
+    onSuccess: (_, { name }) => {
+      messageApi.success(`${name} Key 已保存`)
+      setKeyInputs((prev) => ({ ...prev, [name]: '' }))
+      refetchProviders()
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? 'Key 保存失败')
+    },
+  })
+
+  const deleteKeyMutation = useMutation({
+    mutationFn: (name: string) => deleteProviderKey(name),
+    onSuccess: (_, name) => {
+      messageApi.success(`${name} Key 已删除`)
+      refetchProviders()
+    },
+    onError: (error: any) => {
+      messageApi.error(error?.response?.data?.detail ?? 'Key 删除失败')
+    },
   })
 
   const invalidateAuthState = () => {
@@ -402,6 +436,80 @@ export function SettingsPage() {
                       <List.Item>
                         <List.Item.Meta title={item.requirement} description={item.evidence} />
                         <Tag color={item.status === 'pass' ? 'green' : 'gold'}>{item.status}</Tag>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              </Card>
+            </div>
+
+            <div className="panel-subgrid panel-subgrid--2">
+              <Card
+                type="inner"
+                className="panel-subcard resizable-subcard"
+                title="AI 模型配置"
+              >
+                <div className="panel-subcard__content">
+                  <Typography.Text type="secondary">
+                    为每个 Provider 配置你自己的 API Key，配置后可在 Agent 面板切换模型。
+                  </Typography.Text>
+                  <List
+                    dataSource={providers}
+                    renderItem={(provider: ProviderInfo) => (
+                      <List.Item
+                        actions={[
+                          <Button
+                            key="save"
+                            size="small"
+                            type="primary"
+                            disabled={!keyInputs[provider.provider_name]}
+                            loading={upsertKeyMutation.isPending}
+                            onClick={() =>
+                              upsertKeyMutation.mutate({
+                                name: provider.provider_name,
+                                key: keyInputs[provider.provider_name] ?? '',
+                              })
+                            }
+                          >
+                            保存
+                          </Button>,
+                          provider.is_configured ? (
+                            <Button
+                              key="delete"
+                              size="small"
+                              danger
+                              loading={deleteKeyMutation.isPending}
+                              onClick={() => deleteKeyMutation.mutate(provider.provider_name)}
+                            >
+                              删除
+                            </Button>
+                          ) : null,
+                        ].filter(Boolean) as React.ReactNode[]}
+                      >
+                        <List.Item.Meta
+                          avatar={
+                            provider.is_configured ? (
+                              <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16 }} />
+                            ) : (
+                              <MinusCircleOutlined style={{ color: '#d9d9d9', fontSize: 16 }} />
+                            )
+                          }
+                          title={provider.provider_name}
+                          description={
+                            <Input.Password
+                              size="small"
+                              placeholder={provider.is_configured ? '已配置，输入新值可覆盖' : '粘贴 API Key'}
+                              value={keyInputs[provider.provider_name] ?? ''}
+                              onChange={(e) =>
+                                setKeyInputs((prev) => ({
+                                  ...prev,
+                                  [provider.provider_name]: e.target.value,
+                                }))
+                              }
+                              style={{ maxWidth: 300 }}
+                            />
+                          }
+                        />
                       </List.Item>
                     )}
                   />

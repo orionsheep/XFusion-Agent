@@ -237,7 +237,7 @@ class SSHConnector:
             "port": host.ssh_port,
             "username": host.username,
             "known_hosts": None,
-            "connect_timeout": 3,
+            "connect_timeout": 8,
         }
         if credential:
             secret = decrypt_secret(credential.encrypted_secret)

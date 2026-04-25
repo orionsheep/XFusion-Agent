@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -72,6 +72,7 @@ class TaskExecuteRequest(BaseModel):
     session_id: str = "default"
     selected_host_ids: list[int] = Field(default_factory=list)
     auto_approve: bool = False
+    model: str | None = None
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -97,3 +98,22 @@ class AgentExecutionRequest(BaseModel):
     action_type: str
     parameters: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = False
+
+
+class ProviderKeyUpsertRequest(BaseModel):
+    key: str
+
+    @field_validator("key")
+    @classmethod
+    def _no_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("key must not be empty or whitespace")
+        return v
+
+
+class ProviderInfo(BaseModel):
+    provider_name: str
+    is_configured: bool
+    models: list[str]
+    supports_custom_model: bool = False

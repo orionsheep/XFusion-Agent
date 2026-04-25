@@ -75,6 +75,7 @@ class OpenAICompatiblePlugin:
     _BASE_URL: str = ""
     _API_KEY_ENV: str = ""
     _ALIASES: dict[str, str] = {}
+    _SUPPORTS_CUSTOM_MODEL_INPUT: bool = True
 
     def normalize_model_id(self, model_id: str) -> str:
         return self._ALIASES.get(model_id, model_id)
@@ -95,8 +96,9 @@ class OpenAICompatiblePlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = self._get_api_key()
+        api_key = api_key_override or self._get_api_key()
         model = self.normalize_model_id(model_id)
 
         body: dict[str, Any] = {
@@ -126,8 +128,9 @@ class OpenAICompatiblePlugin:
         max_turns: int = 10,
         max_tokens: int = 4096,
         timeout: int = 60,
+        api_key_override: str | None = None,
     ) -> AgentLoopResult:
-        api_key = self._get_api_key()
+        api_key = api_key_override or self._get_api_key()
         model = self.normalize_model_id(model_id)
         all_tool_calls: list[ToolCall] = []
 
@@ -241,8 +244,9 @@ class AnthropicNativePlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = os.environ[self._API_KEY_ENV]
+        api_key = api_key_override or os.environ[self._API_KEY_ENV]
         model = self.normalize_model_id(model_id)
 
         system = next((m.content for m in messages if m.role == "system"), "")
@@ -279,8 +283,9 @@ class AnthropicNativePlugin:
         max_turns: int = 10,
         max_tokens: int = 4096,
         timeout: int = 60,
+        api_key_override: str | None = None,
     ) -> AgentLoopResult:
-        api_key = os.environ[self._API_KEY_ENV]
+        api_key = api_key_override or os.environ[self._API_KEY_ENV]
         model = self.normalize_model_id(model_id)
         all_tool_calls: list[ToolCall] = []
 
@@ -564,6 +569,7 @@ class WenxinPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
         model = self.normalize_model_id(model_id)
         url = self._CHAT_URL.format(model=model)
@@ -635,8 +641,9 @@ class SparkPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = os.environ["SPARK_API_KEY"]
+        api_key = api_key_override or os.environ["SPARK_API_KEY"]
         model = self.normalize_model_id(model_id)
         body: dict[str, Any] = {
             "model": model,
@@ -678,8 +685,9 @@ class GeminiPlugin:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_key_override: str | None = None,
     ) -> LLMResponse:
-        api_key = os.environ["GEMINI_API_KEY"]
+        api_key = api_key_override or os.environ["GEMINI_API_KEY"]
         model = self.normalize_model_id(model_id)
         url = f"{self._BASE}/{model}:generateContent?key={api_key}"
 
@@ -712,8 +720,9 @@ class GeminiPlugin:
         max_turns: int = 10,
         max_tokens: int = 4096,
         timeout: int = 60,
+        api_key_override: str | None = None,
     ) -> AgentLoopResult:
-        api_key = os.environ["GEMINI_API_KEY"]
+        api_key = api_key_override or os.environ["GEMINI_API_KEY"]
         model = self.normalize_model_id(model_id)
         all_tool_calls: list[ToolCall] = []
 
@@ -856,6 +865,22 @@ class ProviderRegistry:
     def list_providers(self) -> list[str]:
         return sorted(self._plugins)
 
+    def list_provider_info(self) -> list[dict]:
+        result = []
+        for name, plugin in sorted(self._plugins.items()):
+            aliases = getattr(plugin, "_ALIASES", {})
+            models = [f"{name}/{v}" for v in aliases.values()] if aliases else []
+            result.append({
+                "provider_name": name,
+                "models": models,
+                "env_key": getattr(plugin, "_API_KEY_ENV", ""),
+                "env_available": bool(plugin.is_available()),
+                "supports_custom_model": bool(
+                    getattr(plugin, "_SUPPORTS_CUSTOM_MODEL_INPUT", False)
+                ),
+            })
+        return result
+
     async def agent_loop(
         self,
         *,
@@ -866,6 +891,7 @@ class ProviderRegistry:
         max_turns: int = 10,
         max_tokens: int = 4096,
         timeout: int = 60,
+        api_keys: dict[str, str] | None = None,
     ) -> AgentLoopResult:
         """
         通用 Agent Loop：支持任意 provider / 任意 Function Calling 格式。
@@ -879,6 +905,7 @@ class ProviderRegistry:
             raise ValueError(f"XFUSION_MODEL must be 'provider/model-id' format, got: '{model}'")
         provider, model_id = model.split("/", 1)
         plugin = self.resolve(provider)
+        api_key_override = (api_keys or {}).get(provider)
 
         if not hasattr(plugin, "run_agent_loop"):
             supported = sorted(n for n, p in self._plugins.items() if hasattr(p, "run_agent_loop"))
@@ -895,6 +922,7 @@ class ProviderRegistry:
             max_turns=max_turns,
             max_tokens=max_tokens,
             timeout=timeout,
+            api_key_override=api_key_override,
         )
 
     async def chat_completion(
@@ -904,6 +932,7 @@ class ProviderRegistry:
         messages: list[LLMMessage],
         max_tokens: int = 4096,
         timeout: int = 30,
+        api_keys: dict[str, str] | None = None,
     ) -> str:
         """
         model 格式: "provider/model-id"
@@ -913,11 +942,13 @@ class ProviderRegistry:
             raise ValueError(f"XFUSION_MODEL must be 'provider/model-id' format, got: '{model}'")
         provider, model_id = model.split("/", 1)
         plugin = self.resolve(provider)
+        api_key_override = (api_keys or {}).get(provider)
         response = await plugin.chat_completion(
             model_id=model_id,
             messages=messages,
             max_tokens=max_tokens,
             timeout=timeout,
+            api_key_override=api_key_override,
         )
         return response.text
 

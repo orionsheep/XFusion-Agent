@@ -609,7 +609,7 @@ body::before {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
   position: relative;
 }
 
@@ -622,6 +622,7 @@ body::before {
 
 .tasks-card--composer {
   flex: 0 0 58%;
+  overflow: auto;
 }
 
 .tasks-card--validation {
@@ -1160,12 +1161,9 @@ body::before {
   border-radius: 22px;
 }
 
-.agent-stage__composer--spotlight {
-  width: min(900px, calc(100% - 36px));
-  margin: 0 auto 18px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 28px 56px rgba(15, 23, 42, 0.08);
+.agent-panel__subcard--live {
+  flex: 1 1 0;
+  min-height: 380px;
 }
 
 .agent-stage__composer-statusbar {
