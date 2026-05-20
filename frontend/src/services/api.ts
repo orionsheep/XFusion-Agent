@@ -169,6 +169,14 @@ export async function deleteRemoteFile(hostId: number, path: string, recursive =
   return data
 }
 
+export async function executeTerminalCommand(
+  hostId: number,
+  payload: { command: string; cwd?: string; safe_mode?: boolean; timeout_seconds?: number },
+) {
+  const { data } = await api.post(`/hosts/${hostId}/terminal/execute`, payload)
+  return data
+}
+
 export async function fetchTasks() {
   const { data } = await api.get('/tasks')
   return data

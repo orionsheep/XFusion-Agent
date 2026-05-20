@@ -80,6 +80,13 @@ class RemoteMkdirRequest(BaseModel):
     recursive: bool = True
 
 
+class RemoteCommandRequest(BaseModel):
+    command: str
+    cwd: str = "/"
+    safe_mode: bool = True
+    timeout_seconds: int = Field(default=20, ge=3, le=60)
+
+
 class ApprovalDecisionRequest(BaseModel):
     approved: bool
     reason: str | None = None

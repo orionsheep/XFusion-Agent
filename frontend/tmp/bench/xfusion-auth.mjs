@@ -1,0 +1,10 @@
+import { chromium } from 'playwright'
+const browser = await chromium.launch({ headless: true })
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
+await page.goto('http://127.0.0.1:5173/login', { waitUntil: 'networkidle', timeout: 120000 })
+await page.getByLabel('用户名').fill('admin')
+await page.getByLabel('密码').fill('admin123')
+await page.getByRole('button', { name: '进入控制台' }).click()
+await page.waitForLoadState('networkidle')
+await page.screenshot({ path: 'tmp/bench/xfusion-home-auth.png', fullPage: true })
+await browser.close()

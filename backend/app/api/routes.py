@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import tempfile
 from datetime import datetime, timezone
 from typing import Annotated
@@ -24,6 +25,7 @@ from ..schemas.api import (
     PasswordChangeRequest,
     PasswordResetRequest,
     ProviderKeyUpsertRequest,
+    RemoteCommandRequest,
     RemoteMkdirRequest,
     RuntimeProfileUpdateRequest,
     TaskExecuteRequest,
@@ -37,10 +39,12 @@ from ..services.platform import (
     HostRepository,
     RemoteFileManager,
     ServiceSync,
+    SSHConnector,
     now,
     serialize_model,
     settings,
     upsert_audit,
+    validate_readonly_commands,
 )
 from ..services.integrations import CapabilityCatalog
 from ..services.monitoring import MonitoringCoreService
@@ -520,6 +524,53 @@ async def delete_host_file(
         payload={"path": result["path"], "recursive": recursive},
     )
     return result
+
+
+@router.post("/hosts/{host_id}/terminal/execute")
+async def execute_host_terminal_command(
+    host_id: int,
+    payload: RemoteCommandRequest,
+    session: Annotated[Session, Depends(get_session)],
+    current_user: Annotated[User, Depends(require_roles("admin", "operator"))],
+) -> dict:
+    command = payload.command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="command is required")
+    if payload.safe_mode:
+        safe, problems = validate_readonly_commands([command])
+        if not safe:
+            raise HTTPException(status_code=400, detail="Blocked by terminal safe mode: " + "; ".join(problems[:3]))
+
+    host = HostRepository.get_host(session, host_id)
+    credential = HostRepository.get_credential(session, host_id)
+    cwd = payload.cwd.strip() or "/"
+    remote_command = command
+    if cwd and cwd != ".":
+        remote_command = f"cd {shlex.quote(cwd)} && {command}"
+    result = await SSHConnector.run(host, credential, remote_command, timeout_seconds=payload.timeout_seconds)
+    result_payload = {
+        "host_id": host.id,
+        "host_name": host.name,
+        "command": command,
+        "cwd": cwd,
+        "safe_mode": payload.safe_mode,
+        "timeout_seconds": payload.timeout_seconds,
+        **result,
+    }
+    upsert_audit(
+        session,
+        actor_id=current_user.id,
+        host_id=host.id,
+        event_type="terminal_command_executed",
+        payload={
+            "command": command,
+            "cwd": cwd,
+            "safe_mode": payload.safe_mode,
+            "exit_code": result.get("exit_code"),
+            "success": result.get("success"),
+        },
+    )
+    return result_payload
 
 
 @router.post("/hosts/{host_id}/profile")
